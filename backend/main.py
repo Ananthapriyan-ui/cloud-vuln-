@@ -23,8 +23,20 @@ import config
 from seed_data import seed_database
 
 # ──────────────────────────────────────────────
-# Structured Logging Setup
+# Structured Logging Setup (Read-only filesystem safe)
 # ──────────────────────────────────────────────
+
+import os
+
+log_handlers = ["console"]
+log_file_path = "/tmp/cloudvuln_api.log" if os.environ.get("VERCEL") == "1" else "cloudvuln_api.log"
+
+try:
+    with open(log_file_path, "a") as _f:
+        pass
+    log_handlers.append("file")
+except (OSError, IOError, PermissionError):
+    pass
 
 LOGGING_CONFIG = {
     "version": 1,
@@ -43,7 +55,7 @@ LOGGING_CONFIG = {
         },
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
-            "filename": "cloudvuln_api.log",
+            "filename": log_file_path,
             "maxBytes": 10 * 1024 * 1024,  # 10MB
             "backupCount": 3,
             "formatter": "structured",
@@ -51,12 +63,15 @@ LOGGING_CONFIG = {
         },
     },
     "root": {
-        "handlers": ["console", "file"],
+        "handlers": log_handlers,
         "level": config.settings.LOG_LEVEL,
     },
 }
 
-logging.config.dictConfig(LOGGING_CONFIG)
+try:
+    logging.config.dictConfig(LOGGING_CONFIG)
+except Exception:
+    logging.basicConfig(level=config.settings.LOG_LEVEL)
 logger = logging.getLogger("CloudVulnEngine")
 
 # ──────────────────────────────────────────────

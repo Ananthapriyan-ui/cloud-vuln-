@@ -12,12 +12,16 @@ logger = logging.getLogger("CloudVulnDB")
 raw_db_url = (config.settings.DATABASE_URL or os.getenv("DATABASE_URL") or "").strip()
 
 if not raw_db_url:
-    raise RuntimeError(
-        "CRITICAL DATABASE CONFIGURATION ERROR:\n"
-        "DATABASE_URL is not set in environment or config.\n"
-        "CloudVuln is strictly configured to use Supabase PostgreSQL.\n"
-        "Please provide a valid PostgreSQL connection string in DATABASE_URL."
-    )
+    if os.environ.get("VERCEL") == "1":
+        logger.warning("DATABASE_URL is not set in Vercel environment. Falling back to temporary SQLite.")
+        raw_db_url = "sqlite:////tmp/cloudvuln.db"
+    else:
+        raise RuntimeError(
+            "CRITICAL DATABASE CONFIGURATION ERROR:\n"
+            "DATABASE_URL is not set in environment or config.\n"
+            "CloudVuln is strictly configured to use Supabase PostgreSQL.\n"
+            "Please provide a valid PostgreSQL connection string in DATABASE_URL."
+        )
 
 # Normalize postgres URL for modern psycopg driver:
 # e.g., postgres:// or postgresql:// -> postgresql+psycopg://
