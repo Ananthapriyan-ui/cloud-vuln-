@@ -13,7 +13,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, getSupabase } from '../lib/supabase';
 
 const AuthContext = createContext(null);
 
@@ -101,9 +101,10 @@ export const AuthProvider = ({ children }) => {
       }
 
       // 2. Check Supabase session (e.g. after Google OAuth redirect)
-      if (supabase) {
+      const client = getSupabase() || supabase;
+      if (client) {
         try {
-          const { data: { session } } = await supabase.auth.getSession();
+          const { data: { session } } = await client.auth.getSession();
           if (mounted && session?.user) {
             setUser(buildUser(session.user));
             setLoading(false);
@@ -121,8 +122,9 @@ export const AuthProvider = ({ children }) => {
 
     // Listen for Supabase auth changes (OAuth callbacks)
     let authListener = null;
-    if (supabase) {
-      const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    const client = getSupabase() || supabase;
+    if (client) {
+      const { data } = client.auth.onAuthStateChange((event, session) => {
         if (session?.user) {
           setUser(buildUser(session.user));
         } else if (event === 'SIGNED_OUT') {
@@ -159,15 +161,16 @@ export const AuthProvider = ({ children }) => {
 
   // ─── Google OAuth Login via Supabase ─────────────────────────────
   const loginWithGoogle = useCallback(async () => {
-    if (!supabase) {
+    const client = getSupabase() || supabase;
+    if (!client) {
       return {
         success: false,
-        error: 'Supabase client is not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file.',
+        error: 'Supabase client is not configured. Please add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env file and restart Vite.',
       };
     }
 
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
+      const { error } = await client.auth.signInWithOAuth({
         provider: 'google',
         options: {
           redirectTo: window.location.origin,
@@ -213,8 +216,9 @@ export const AuthProvider = ({ children }) => {
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => {});
     }
-    if (supabase) {
-      supabase.auth.signOut().catch(() => {});
+    const client = getSupabase() || supabase;
+    if (client) {
+      client.auth.signOut().catch(() => {});
     }
     clearTokens();
     setUser(null);
