@@ -99,4 +99,7 @@ class Report(Base):
     duration = Column(String(30), default="2m 15s")
     html_generated = Column(Boolean, default=False)
     csv_generated = Column(Boolean, default=False)
+    file_name = Column(String(255), nullable=True)
+    file_type = Column(String(20), nullable=True)  # html, csv
+    storage_path = Column(String(500), nullable=True)
     created_at = Column(DateTime, default=now_utc)

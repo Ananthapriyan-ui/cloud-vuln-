@@ -1,15 +1,44 @@
-﻿import sqlite3
+#!/usr/bin/env python3
+"""
+CloudVuln — Supabase PostgreSQL Schema Verification Utility
 
-conn = sqlite3.connect('cloudvuln.db')
-cursor = conn.cursor()
+This script verifies and applies any pending schema upgrades
+to the Supabase PostgreSQL database without data loss.
 
-cursor.execute("PRAGMA table_info(users);")
-user_cols = [col[1] for col in cursor.fetchall()]
-print('Users table columns:', user_cols)
+Usage:
+    cd backend
+    python migrate_db.py
 
-if 'last_login' not in user_cols:
-    cursor.execute("ALTER TABLE users ADD COLUMN last_login DATETIME;")
-    conn.commit()
-    print("Added last_login column to users table")
+Requires DATABASE_URL to be set in backend/.env pointing to Supabase PostgreSQL.
+"""
+import os
+import sys
+import logging
 
-conn.close()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logger = logging.getLogger("MigrateDB")
+
+
+def run_migration():
+    """Verify Supabase PostgreSQL schema and apply any pending column additions."""
+    try:
+        from database import engine, init_db, check_db_connection
+    except RuntimeError as e:
+        logger.critical(str(e))
+        sys.exit(1)
+
+    if not check_db_connection():
+        logger.critical(
+            "Cannot connect to Supabase PostgreSQL.\n"
+            "Ensure DATABASE_URL is set correctly in backend/.env and "
+            "your Supabase project is active."
+        )
+        sys.exit(1)
+
+    logger.info("Connected to Supabase PostgreSQL. Running schema migration...")
+    init_db()
+    logger.info("Schema migration completed successfully.")
+
+
+if __name__ == "__main__":
+    run_migration()

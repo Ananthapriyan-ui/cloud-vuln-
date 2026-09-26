@@ -27,8 +27,12 @@ class Settings(BaseSettings):
     RATE_LIMIT_REQUESTS: int = 100
     RATE_LIMIT_WINDOW_SECONDS: int = 60
 
-    # Database
+    # Database & Supabase
     DATABASE_URL: str = ""
+    SUPABASE_URL: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_STORAGE_BUCKET: str = "reports"
+    NVD_API_KEY: str = ""
 
     # App
     APP_ENV: str = "development"

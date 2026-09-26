@@ -8,7 +8,6 @@ import {
   History,
   GitCompare,
   User,
-  Settings,
   LogOut,
   ChevronLeft,
   ChevronRight,
@@ -29,7 +28,6 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
     { label: 'Scan History', path: '/history', icon: History },
     { label: 'Scan Comparison', path: '/compare', icon: GitCompare, badge: 'NEW' },
     { label: 'Profile', path: '/profile', icon: User },
-    { label: 'Settings', path: '/settings', icon: Settings },
   ];
 
   const handleLogout = () => {

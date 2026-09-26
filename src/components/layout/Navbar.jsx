@@ -20,7 +20,6 @@ export const Navbar = ({ collapsed }) => {
     '/history': 'Scan History & Audit Logs',
     '/compare': 'Scan Comparison & Security Trend',
     '/profile': 'SecOps User Profile',
-    '/settings': 'Platform & Cloud Integrations',
   };
 
   const currentTitle = location.pathname.startsWith('/reports')
@@ -135,16 +134,7 @@ export const Navbar = ({ collapsed }) => {
                 <User className="w-4 h-4" />
                 <span>My Profile</span>
               </button>
-              <button
-                onClick={() => {
-                  setShowProfileMenu(false);
-                  navigate('/settings');
-                }}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-slate-300 hover:text-cyan-400 hover:bg-slate-800/60 rounded-lg transition-colors flex items-center gap-2"
-              >
-                <ShieldCheck className="w-4 h-4" />
-                <span>Integrations & API</span>
-              </button>
+
               <div className="my-1 border-t border-slate-800" />
               <button
                 onClick={() => {

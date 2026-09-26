@@ -3,7 +3,7 @@
 [![Vercel](https://img.shields.io/badge/Frontend-Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com)
 [![Render](https://img.shields.io/badge/Backend-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://render.com)
 [![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![SQLite](https://img.shields.io/badge/Database-SQLite%20WAL-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org)
+[![Supabase](https://img.shields.io/badge/Database-Supabase%20PostgreSQL-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com)
 
 **CloudVuln** is an enterprise-grade cloud security scanner and vulnerability management platform designed for DevSecOps, Cloud Architects, and Security Engineers. It delivers deep static and dynamic vulnerability analysis across multi-cloud environments (AWS, Azure, GCP), Docker container images, and Infrastructure-as-Code (Terraform, Kubernetes, CloudFormation) configurations.
 
@@ -19,7 +19,7 @@
 - 📊 **Real-Time Analytics & Dashboard**: Instant visibility into risk scores, severity breakdowns (Critical, High, Medium, Low), and historical trend analysis.
 - 📄 **Executive PDF & HTML Reports**: Dynamic compliance and audit report generation with executive summaries, CVSS severity metrics, and remediation guides powered by ReportLab.
 - 🛡️ **Rate Limiting & Security Safeguards**: Built-in sliding-window rate limiting (100 req/min per IP), security headers, CORS origin enforcement, and safe error obscuration.
-- 💾 **High-Performance Database Engine**: Production SQLite configuration featuring Write-Ahead Logging (WAL) mode, 64MB memory caching, and zero-downtime online backup automation.
+- 💾 **Supabase PostgreSQL**: Cloud-hosted PostgreSQL as the single source of truth for all persistent data (users, scans, vulnerabilities, reports). Zero-downtime connection pooling via Supabase's built-in pgBouncer, with Point-in-Time Recovery (PITR) for automated backups.
 
 ---
 
@@ -29,10 +29,9 @@
 cloudvuln/
 ├── backend/
 │   ├── analyzer.py            # Vulnerability detection engine & rules database
-│   ├── backup_db.py           # Zero-downtime online SQLite backup utility
-│   ├── cloudvuln.db           # SQLite production database (WAL mode)
+│   ├── backup_db.py           # Supabase PostgreSQL JSON data export utility
 │   ├── config.py              # Centralized environment & security configuration
-│   ├── database.py            # SQLAlchemy engine, session maker, WAL pragmas
+│   ├── database.py            # SQLAlchemy engine, PostgreSQL session maker
 │   ├── gunicorn.conf.py       # Production Gunicorn / Uvicorn worker settings
 │   ├── main.py                # FastAPI app bootstrap, middleware, & endpoints
 │   ├── models.py              # SQLAlchemy ORM models (User, Scan, Vulnerability)
@@ -131,21 +130,27 @@ APP_ENV=production
 LOG_LEVEL=INFO
 
 # Generate strong 64-character secrets in production
-SECRET_KEY="c44ba6a9e105e197d1979927b233a0058bbf9a89d70dfef198a287fa44e782a1"
-REFRESH_SECRET_KEY="e9b92209706fb6b559779dfbb7aa27e7f6d4d12c8b7f23a9d90e8f7a81234567"
+SECRET_KEY="your-64-char-random-secret-key-here"
+REFRESH_SECRET_KEY="your-64-char-random-refresh-key-here"
 ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 REFRESH_TOKEN_EXPIRE_DAYS=7
 
-# Allowed CORS origins (comma-separated string or array)
+# Allowed CORS origins (comma-separated string or JSON array)
 ALLOWED_ORIGINS="https://cloudvuln-frontend.vercel.app,http://localhost:3000"
 
 # Rate Limiting
 RATE_LIMIT_REQUESTS=100
 RATE_LIMIT_WINDOW_SECONDS=60
 
-# Persistent SQLite database location
-DATABASE_URL="sqlite:////var/data/cloudvuln.db"
+# Supabase PostgreSQL (PRIMARY DATABASE — REQUIRED)
+# Get from: Supabase Dashboard → Project → Settings → Database → Connection string
+DATABASE_URL="postgresql://postgres.[ref]:[password]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres"
+
+# Supabase Storage (optional — for report file uploads)
+SUPABASE_URL="https://[your-project-ref].supabase.co"
+SUPABASE_SERVICE_ROLE_KEY="[your-service-role-key]"
+SUPABASE_STORAGE_BUCKET=reports
 ```
 
 ---
@@ -200,4 +205,4 @@ Interactive Swagger API documentation is available at `/api/docs` and ReDoc form
 - 🌐 **AWS / Azure / GCP Live Cloud IAM Integration**: Direct OAuth connection to query live cloud provider APIs via SDKs (boto3, azure-mgmt, google-cloud).
 - 🔔 **Slack & Webhook Alerts**: Real-time notifications dispatched to DevSecOps channels upon critical vulnerability detection.
 - 🤖 **AI-Driven Remediation Generator**: Automatic generation of custom Terraform/CloudFormation code patches to resolve flagged misconfigurations.
-- 🗄️ **PostgreSQL / Enterprise DB Driver**: Native support for Amazon RDS / PostgreSQL for large-scale enterprise deployments.
+- 🗄️ **Row-Level Security (RLS)**: Enforce per-user data isolation directly at the Supabase PostgreSQL level for multi-tenant deployments.

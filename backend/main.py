@@ -18,6 +18,7 @@ import database
 import analyzer
 import scan_comparator
 import report_generator
+import report_storage
 import config
 from seed_data import seed_database
 
@@ -219,29 +220,32 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 # ──────────────────────────────────────────────
-# Health Check
+# Health & Supabase Connectivity Check
 # ──────────────────────────────────────────────
 
 @app.get("/")
 def health_check():
+    db_connected = database.check_db_connection()
     return {
-        "status": "online",
-        "engine": "CloudVuln FastAPI v2",
+        "status": "online" if db_connected else "degraded",
+        "engine": "CloudVuln Security Engine v2",
         "version": "2.0.0",
-        "features": ["jwt-auth", "rbac", "rate-limiting", "security-headers", "wal-sqlite"],
+        "database": "Supabase PostgreSQL",
+        "database_connected": db_connected,
+        "features": ["jwt-auth", "supabase-postgresql", "supabase-storage", "rate-limiting", "security-headers"],
     }
 
 
 @app.get("/api/health")
 def api_health(db: Session = Depends(database.get_db)):
-    try:
-        from sqlalchemy import text
-        db.execute(text("SELECT 1"))
-        db_status = "ok"
-    except Exception as e:
-        logger.error(f"Health check DB query error: {e}")
-        db_status = "degraded"
-    return {"api": "ok", "database": db_status, "version": "2.0.0"}
+    is_healthy = database.check_db_connection()
+    db_status = "ok" if is_healthy else "disconnected"
+    return {
+        "api": "ok",
+        "database": db_status,
+        "provider": "Supabase PostgreSQL",
+        "version": "2.0.0"
+    }
 
 
 # ──────────────────────────────────────────────
@@ -341,6 +345,47 @@ def refresh_token(req: schemas.RefreshTokenRequest, db: Session = Depends(databa
 @app.get("/api/auth/me", response_model=schemas.UserResponse)
 def get_me(current_user: models.User = Depends(security.get_current_user)):
     return current_user
+
+
+@app.post("/api/auth/oauth-sync", response_model=schemas.Token)
+def oauth_sync(req: schemas.OAuthSyncRequest, db: Session = Depends(database.get_db)):
+    """
+    Synchronizes a verified Google OAuth user into Supabase PostgreSQL.
+    If the user does not exist, creates the account without requiring a password.
+    If the user already exists, updates last_login and issues valid JWT tokens.
+    """
+    user = db.query(models.User).filter(models.User.email == req.email).first()
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    if not user:
+        # Create user record in Supabase PostgreSQL
+        user = models.User(
+            email=req.email,
+            full_name=req.full_name or req.email.split("@")[0],
+            hashed_password=security.get_password_hash(security.secrets.token_urlsafe(32)),
+            is_active=True,
+            created_at=now,
+            last_login=now,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        logger.info(f"Google OAuth user created in Supabase PostgreSQL: {user.email}")
+    else:
+        user.last_login = now
+        db.commit()
+        logger.info(f"Google OAuth user logged in from Supabase PostgreSQL: {user.email}")
+
+    access_token = security.create_access_token(data={"sub": user.email})
+    refresh_token = security.create_refresh_token(data={"sub": user.email})
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user": user,
+    }
 
 
 @app.post("/api/auth/logout")
@@ -541,6 +586,44 @@ def create_scan_record(
         csv_generated=True,
     )
     db.add(new_report)
+
+    # Persist real findings into vulnerabilities table in Supabase PostgreSQL
+    if scan_in.scan_data:
+        try:
+            import json
+            parsed = json.loads(scan_in.scan_data)
+            # 1. OWASP findings that failed or generated warnings
+            owasp_findings = (parsed.get("owasp_summary") or {}).get("findings") or []
+            for f in owasp_findings:
+                if f.get("status") in ("Failed", "Warning"):
+                    db.add(models.Vulnerability(
+                        cve_id=f.get("related_cve") or f.get("owasp_id") or "OWASP-FINDING",
+                        title=f.get("title") or f.get("category") or "Security Finding",
+                        severity=f.get("severity") or "Medium",
+                        cvss_score=float(f.get("cvss_score") or 5.0),
+                        component=f.get("affected_component") or "Web Application",
+                        description=f.get("description") or "",
+                        remediation=f.get("recommendation") or "",
+                        remediation_cmd=f.get("remediation_cmd") or "",
+                        scan_ref=scan_ref,
+                    ))
+
+            # 2. CVE findings from NVD
+            cve_findings = parsed.get("cve_findings") or []
+            for c in cve_findings:
+                db.add(models.Vulnerability(
+                    cve_id=c.get("cve_id") or "CVE-UNKNOWN",
+                    title=c.get("description", "")[:280] or "Vulnerability Finding",
+                    severity=c.get("severity") or "Medium",
+                    cvss_score=float(c.get("cvss_score") or 5.0),
+                    component=c.get("component") or "Web Server",
+                    description=c.get("description") or "",
+                    remediation=c.get("remediation") or "Update package to latest secure version",
+                    remediation_cmd=c.get("remediation_cmd") or "",
+                    scan_ref=scan_ref,
+                ))
+        except Exception as e:
+            logger.warning(f"Could not parse and persist detailed findings for {scan_ref}: {e}")
 
     db.add(models.ActivityLog(
         text=f"New assessment recorded: {scan_ref} on {scan_in.target}",
@@ -923,19 +1006,59 @@ def download_report_file(
         "scan_data":      parsed_data
     }
 
+    filename = f"CLOUDVULN_Report_{scan.scan_ref}.{format.lower()}"
+    report_record = db.query(models.Report).filter(models.Report.scan_ref == scan.scan_ref).first()
+
     if format.lower() == "csv":
-        csv_str = report_generator.generate_csv_report(scan_dict)
+        # Check if already stored in Supabase Storage
+        file_bytes = None
+        if report_record and report_record.storage_path and report_record.file_type == "csv":
+            file_bytes = report_storage.download_report_file(report_record.storage_path)
+
+        if not file_bytes:
+            csv_str = report_generator.generate_csv_report(scan_dict)
+            file_bytes = csv_str.encode("utf-8")
+            storage_path = report_storage.upload_report_file(
+                file_bytes=file_bytes,
+                file_name=filename,
+                content_type="text/csv",
+            )
+            if storage_path and report_record:
+                report_record.storage_path = storage_path
+                report_record.file_name = filename
+                report_record.file_type = "csv"
+                report_record.csv_generated = True
+                db.commit()
+
         return Response(
-            content=csv_str,
+            content=file_bytes,
             media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename=CLOUDVULN_Report_{scan.scan_ref}.csv"},
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
     else:
-        html_str = report_generator.generate_html_report(scan_dict)
+        file_bytes = None
+        if report_record and report_record.storage_path and report_record.file_type == "html":
+            file_bytes = report_storage.download_report_file(report_record.storage_path)
+
+        if not file_bytes:
+            html_str = report_generator.generate_html_report(scan_dict)
+            file_bytes = html_str.encode("utf-8")
+            storage_path = report_storage.upload_report_file(
+                file_bytes=file_bytes,
+                file_name=filename,
+                content_type="text/html",
+            )
+            if storage_path and report_record:
+                report_record.storage_path = storage_path
+                report_record.file_name = filename
+                report_record.file_type = "html"
+                report_record.html_generated = True
+                db.commit()
+
         return Response(
-            content=html_str,
+            content=file_bytes,
             media_type="text/html",
-            headers={"Content-Disposition": f"attachment; filename=CLOUDVULN_Report_{scan.scan_ref}.html"},
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
         )
 
 

@@ -7,7 +7,7 @@
 The platform follows a decoupled modern web application architecture:
 - **Frontend Layer**: Single Page Application (SPA) built with React 18, Vite, Tailwind CSS, Lucide Icons, and Recharts. Deployed on **Vercel** edge infrastructure.
 - **Backend Service Layer**: RESTful API engine powered by **FastAPI** (Python 3.10+), executed via **Gunicorn** process supervisor with **Uvicorn** worker processes. Deployed on **Render** cloud compute.
-- **Database Engine**: Production-tuned **SQLite** in Write-Ahead Logging (WAL) mode with persistent disk storage (`/var/data/cloudvuln.db`), providing zero-downtime concurrent reader/writer operations and automated online backups.
+- **Database Engine**: **Supabase PostgreSQL** — cloud-hosted PostgreSQL as the single source of truth for all application data (users, scans, vulnerabilities, reports). Accessed via SQLAlchemy with psycopg3, connection pooling (pgBouncer), SSL enforcement, and pre-ping health checks.
 
 ---
 
@@ -47,8 +47,8 @@ The platform follows a decoupled modern web application architecture:
                                │ SQLAlchemy ORM
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              Persistent SQLite Database                     │
-│          Mount Path: /var/data/cloudvuln.db (WAL Mode)       │
+│              Supabase PostgreSQL (Primary DB)              │
+│    Cloud-hosted | SSL | Connection Pooling | PITR Backups   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -96,16 +96,22 @@ The scanner engine (`backend/analyzer.py`) processes three distinct scanning tar
 
 ## 5. Database Schema & Persistence
 
-SQLite WAL (Write-Ahead Logging) mode allows concurrent readers to query the database while a writer transaction is committed.
+Supabase PostgreSQL is the single source of truth for all persistent application data. All database access goes through SQLAlchemy ORM with psycopg3, using SSL-enforced connections and connection pooling via Supabase's pgBouncer.
 
 ### Primary Database Models (`backend/models.py`)
 
-- **User**: ID, email, hashed_password, full_name, role, is_active, created_at.
-- **Scan**: ID, scan_ref, target, provider, scan_type, status, risk_score, critical_count, high_count, medium_count, low_count, user_id, created_at.
-- **Vulnerability**: ID, scan_id, title, cve_id, severity, score, component, description, remediation, created_at.
+- **User**: ID, email, hashed_password, full_name, is_active, created_at, last_login.
+- **Scan**: ID, scan_ref, target, provider, scan_type, status, risk_score, critical_count, high_count, medium_count, low_count, scan_data (JSON), created_at.
+- **Vulnerability**: ID, scan_ref (FK→Scan), cve_id, title, severity, cvss_score, component, description, remediation, remediation_cmd, created_at.
+- **Report**: ID, report_ref, scan_ref (FK→Scan), target, executive_summary, scan_type, html_generated, csv_generated, storage_path, file_name, file_type, created_at.
+- **ActivityLog**: ID, text, type, time_ago, created_at.
 
 ---
 
 ## 6. Backup & Disaster Recovery
 
-The system includes an online atomic SQLite backup script (`backend/backup_db.py`) utilizing Python's native `sqlite3.connect().backup()` API. This creates continuous hot backups without locking database tables or interrupting active users. Automated cleanup retains the 7 most recent backups.
+Supabase handles database backups at the infrastructure level:
+- **Free Plan**: Daily automated backups retained for 7 days (accessible via Supabase Dashboard → Database → Backups).
+- **Pro Plan**: Point-in-Time Recovery (PITR) with up to 30-day retention.
+
+For supplementary local snapshots, run `backend/backup_db.py` to export all scan, report, user, and activity log data to a JSON file. This exports data without exposing password hashes.

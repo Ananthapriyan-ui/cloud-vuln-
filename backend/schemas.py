@@ -58,6 +58,11 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 
+class OAuthSyncRequest(BaseModel):
+    email: EmailStr
+    full_name: Optional[str] = None
+
+
 class Token(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None

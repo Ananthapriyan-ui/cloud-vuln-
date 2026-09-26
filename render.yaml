@@ -21,9 +21,15 @@ services:
         generateValue: true
       - key: ALLOWED_ORIGINS
         value: "https://miniproject.vercel.app,https://cloudvuln-frontend.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
+      # ── Supabase PostgreSQL (PRIMARY DATABASE) ──────────────────
+      # Set DATABASE_URL in Render Dashboard → Environment (keep secret, do NOT hardcode here)
+      # Format: postgresql://postgres.[ref]:[password]@[host]:6543/postgres
       - key: DATABASE_URL
-        value: "sqlite:////var/data/cloudvuln.db"
-    disk:
-      name: cloudvuln-data
-      mountPath: /var/data
-      sizeGB: 1
+        sync: false   # must be set manually in Render Dashboard
+      # ── Supabase Storage (for report uploads) ───────────────────
+      - key: SUPABASE_URL
+        sync: false   # must be set manually in Render Dashboard
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false   # must be set manually in Render Dashboard
+      - key: SUPABASE_STORAGE_BUCKET
+        value: reports
