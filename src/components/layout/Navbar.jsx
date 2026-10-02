@@ -19,7 +19,7 @@ export const Navbar = ({ collapsed }) => {
     '/scanner': 'Target Vulnerability Scanner',
     '/history': 'Scan History & Audit Logs',
     '/compare': 'Scan Comparison & Security Trend',
-    '/profile': 'SecOps User Profile',
+    '/profile': 'User Profile',
   };
 
   const currentTitle = location.pathname.startsWith('/reports')

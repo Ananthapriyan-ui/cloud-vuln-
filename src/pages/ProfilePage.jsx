@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import {
   User,
+  Shield,
   ShieldCheck,
   Mail,
-  Smartphone
+  CheckCircle
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -28,7 +29,7 @@ export const ProfilePage = () => {
           <span>User Profile</span>
         </h2>
         <p className="text-xs sm:text-sm text-slate-400">
-          Manage profile details, security settings, and multi-factor authentication.
+          Manage your profile details and account information.
         </p>
       </div>
 
@@ -51,19 +52,20 @@ export const ProfilePage = () => {
 
             <div>
               <h3 className="text-lg font-bold text-slate-100">{name}</h3>
+              <p className="text-xs text-slate-400 font-mono mt-0.5">{email}</p>
             </div>
 
-            <div className="flex items-center justify-center gap-2 pt-2">
-              <Badge variant="cyan" dot>MFA ENABLED</Badge>
+            <div className="flex items-center justify-center gap-2 pt-1">
+              <Badge variant="success" dot>ACTIVE USER</Badge>
             </div>
 
             <div className="pt-4 border-t border-slate-800 space-y-3 text-left">
               <Input label="Full Name" value={name} onChange={(e) => setName(e.target.value)} icon={User} />
               <Input label="Email Address" value={email} onChange={(e) => setEmail(e.target.value)} icon={Mail} />
               <Button
-                variant="secondary"
+                variant="primary"
                 className="w-full mt-2"
-                onClick={() => addToast('Profile changes saved', 'success')}
+                onClick={() => addToast('Profile changes saved successfully', 'success')}
               >
                 Update Profile
               </Button>
@@ -71,25 +73,68 @@ export const ProfilePage = () => {
           </CardContent>
         </Card>
 
-        {/* Right Column: Security Management */}
+        {/* Right Column: Account Information & Platform Privileges */}
         <div className="lg:col-span-2 space-y-6">
-          {/* MFA Hardware Keys */}
           <Card>
             <CardHeader>
-              <CardTitle icon={ShieldCheck} subtitle="Hardware authenticators and TOTP apps">
-                Multi-Factor Authentication (MFA)
+              <CardTitle icon={ShieldCheck} subtitle="CloudVuln platform role and system privileges">
+                Account Information & Privileges
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-center justify-between p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
-                <div className="flex items-center gap-3">
-                  <Smartphone className="w-5 h-5 text-cyan-400" />
-                  <div>
-                    <p className="font-semibold text-slate-200">TOTP Authenticator (YubiKey / Google Auth)</p>
-                    <p className="text-slate-400 text-[11px]">Active since July 2026</p>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[11px]">Operator ID</span>
+                  <p className="font-mono text-cyan-400 font-semibold truncate">{user?.id || 'usr_cloudvuln_01'}</p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[11px]">Assigned Role</span>
+                  <p className="font-semibold text-slate-200">Security Analyst / Auditor</p>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[11px]">Account Status</span>
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span className="text-emerald-400 font-semibold">Active & Verified</span>
                   </div>
                 </div>
-                <Badge variant="success" size="sm">ACTIVE</Badge>
+
+                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[11px]">Session Authentication</span>
+                  <p className="font-semibold text-slate-200">JWT Encrypted Session</p>
+                </div>
+              </div>
+
+              <div className="pt-2 border-t border-slate-800">
+                <h4 className="text-xs font-semibold text-slate-300 mb-3 flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-cyan-400" />
+                  Active Security Capabilities
+                </h4>
+                <div className="space-y-2 text-xs">
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800/80">
+                    <div className="flex items-center gap-2.5 text-slate-300">
+                      <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>Target Vulnerability Scanner (Passive & Active)</span>
+                    </div>
+                    <Badge variant="cyan" size="sm">GRANTED</Badge>
+                  </div>
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800/80">
+                    <div className="flex items-center gap-2.5 text-slate-300">
+                      <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>Security Assessment Reports & PDF Exports</span>
+                    </div>
+                    <Badge variant="cyan" size="sm">GRANTED</Badge>
+                  </div>
+                  <div className="flex items-center justify-between p-3 rounded-xl bg-slate-900/40 border border-slate-800/80">
+                    <div className="flex items-center gap-2.5 text-slate-300">
+                      <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                      <span>Historical Audit Logs & Delta Comparison</span>
+                    </div>
+                    <Badge variant="cyan" size="sm">GRANTED</Badge>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>

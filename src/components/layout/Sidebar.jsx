@@ -32,7 +32,7 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
 
   const handleLogout = () => {
     logout();
-    addToast('Logged out of SecOps session', 'info');
+    addToast('Logged out of session', 'info');
     navigate('/login');
   };
 
@@ -129,7 +129,7 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
             {!collapsed && (
               <div className="flex flex-col truncate">
                 <span className="text-xs font-semibold text-slate-200 truncate">
-                  {user?.full_name || 'SecOps User'}
+                  {user?.full_name || 'User'}
                 </span>
                 <span className="text-[10px] text-slate-400 font-mono truncate">
                   {user?.email || 'operator@cloudvuln.io'}
