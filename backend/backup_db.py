@@ -25,7 +25,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 logger = logging.getLogger("BackupUtility")
 
 
-def run_backup(backup_dir: str = None, keep_count: int = 7):
+def run_backup(backup_dir: str | None = None, keep_count: int = 7):
     """
     Exports all scans, users (without passwords), and reports from
     Supabase PostgreSQL to a local JSON snapshot.

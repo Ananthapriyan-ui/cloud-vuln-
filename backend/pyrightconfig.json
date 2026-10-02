@@ -2,13 +2,14 @@
   "pythonVersion": "3.14",
   "pythonPlatform": "Windows",
   "pythonPath": "C:\\Users\\Ananthapriyan M\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
-  "venvPath": "C:\\Users\\Ananthapriyan M\\AppData\\Local\\Programs\\Python\\Python314",
-  "typeCheckingMode": "basic",
+  "typeCheckingMode": "off",
   "reportMissingModuleSource": "none",
   "reportMissingImports": "none",
   "reportUnknownMemberType": "none",
+  "reportMissingTypeStubs": "none",
   "extraPaths": [
-    "C:\\Users\\Ananthapriyan M\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages"
+    "C:\\Users\\Ananthapriyan M\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages",
+    "C:\\Users\\Ananthapriyan M\\Downloads\\cloudvuln\\backend"
   ],
   "exclude": [
     "__pycache__",
