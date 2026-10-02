@@ -190,8 +190,19 @@ def query_nvd_cve(keyword: str) -> List[Dict[str, Any]]:
     # 1. Attempt live query against official NVD REST API v2.0
     try:
         url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={urllib.parse.quote(keyword_clean)}&resultsPerPage=6"
-        req = urllib.request.Request(url, headers={'User-Agent': 'CloudVuln-SecOps-Dashboard/1.0'})
-        with urllib.request.urlopen(req, timeout=3) as response:
+        headers = {'User-Agent': 'CloudVuln-SecOps-Dashboard/1.0'}
+
+        # Attach API key if configured — raises rate limit from 5 req/30s to 50 req/30s
+        try:
+            import config as _config
+            nvd_key = (_config.settings.NVD_API_KEY or "").strip()
+            if nvd_key:
+                headers['apiKey'] = nvd_key
+        except Exception:
+            pass
+
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as response:
             data = json.loads(response.read().decode())
             cve_items = data.get("vulnerabilities", [])
             
