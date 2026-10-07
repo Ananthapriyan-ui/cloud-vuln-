@@ -462,7 +462,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         if len(tech_keyword) > 2:
             cve_records = query_nvd_cve(tech_keyword)
 
-    findings = []
+    findings: List[Dict[str, Any]] = []
     is_https = formatted_url.startswith("https://")
 
     # A01:2025 – Broken Access Control

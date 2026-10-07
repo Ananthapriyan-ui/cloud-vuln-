@@ -1,5 +1,6 @@
 import os
 import logging
+from typing import Dict, Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -33,7 +34,7 @@ else:
     SQLALCHEMY_DATABASE_URL = raw_db_url
 
 # Production PostgreSQL engine configuration with pooling, pre-ping & SSL
-engine_kwargs = {
+engine_kwargs: Dict[str, Any] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
     "echo": False,
@@ -47,7 +48,7 @@ if "postgresql" in SQLALCHEMY_DATABASE_URL:
         "pool_timeout": 30,
     })
     # Add connect_args for SSL if not already specified in query string
-    connect_args = {}
+    connect_args: Dict[str, Any] = {}
     if "sslmode" not in SQLALCHEMY_DATABASE_URL:
         connect_args["sslmode"] = "require"
     if connect_args:

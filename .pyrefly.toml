@@ -5,8 +5,8 @@ site_package_path = [
     "C:\\Users\\Ananthapriyan M\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages",
 ]
 search_path = [
-    "C:\\Users\\Ananthapriyan M\\Downloads\\cloudvuln\\backend",
+    "c:\\Users\\Ananthapriyan M\\Downloads\\cloudvuln\\backend",
+    "c:\\Users\\Ananthapriyan M\\Downloads\\cloudvuln",
     "c:\\Users\\Ananthapriyan M\\venv\\Lib\\site-packages",
     "C:\\Users\\Ananthapriyan M\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\site-packages",
 ]
-

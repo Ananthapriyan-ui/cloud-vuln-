@@ -6,7 +6,10 @@ backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "bac
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-from main import app
+try:
+    from backend.main import app
+except ImportError:
+    from main import app
 
 # Export for Vercel Serverless Function runtime
 handler = app
