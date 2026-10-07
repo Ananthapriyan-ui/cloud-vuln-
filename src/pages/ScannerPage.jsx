@@ -144,7 +144,7 @@ export const ScannerPage = () => {
           risk_level: 'Medium',
           findings: [
             {
-              owasp_id: 'A01:2021',
+              owasp_id: 'A01:2025',
               category: 'Broken Access Control',
               title: 'Access Control Transport Policy Compliant',
               status: 'Passed',
@@ -159,7 +159,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A01_2021-Broken_Access_Control/'
             },
             {
-              owasp_id: 'A02:2021',
+              owasp_id: 'A04:2025',
               category: 'Cryptographic Failures',
               title: 'HSTS Transport Header Missing',
               status: 'Failed',
@@ -174,7 +174,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A02_2021-Cryptographic_Failures/'
             },
             {
-              owasp_id: 'A03:2021',
+              owasp_id: 'A05:2025',
               category: 'Injection',
               title: 'Missing Content Security Policy (CSP)',
               status: 'Warning',
@@ -189,7 +189,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A03_2021-Injection/'
             },
             {
-              owasp_id: 'A04:2021',
+              owasp_id: 'A06:2025',
               category: 'Insecure Design',
               title: 'Architecture & Workflow Inspection',
               status: 'Unable to Verify',
@@ -204,7 +204,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A04_2021-Insecure_Design/'
             },
             {
-              owasp_id: 'A05:2021',
+              owasp_id: 'A02:2025',
               category: 'Security Misconfiguration',
               title: 'Technology Banner & Header Misconfiguration',
               status: 'Failed',
@@ -219,7 +219,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A05_2021-Security_Misconfiguration/'
             },
             {
-              owasp_id: 'A06:2021',
+              owasp_id: 'A03:2025',
               category: 'Vulnerable and Outdated Components',
               title: 'Known Public CVE Match in Server Stack',
               status: 'Failed',
@@ -234,7 +234,7 @@ export const ScannerPage = () => {
               reference: 'https://nvd.nist.gov/vuln/detail/CVE-2021-41773'
             },
             {
-              owasp_id: 'A07:2021',
+              owasp_id: 'A07:2025',
               category: 'Identification and Authentication Failures',
               title: 'Authentication Session Cookie Directive Verified',
               status: 'Passed',
@@ -249,7 +249,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/'
             },
             {
-              owasp_id: 'A08:2021',
+              owasp_id: 'A08:2025',
               category: 'Software and Data Integrity Failures',
               title: 'Software Asset Delivery Directives Active',
               status: 'Passed',
@@ -264,7 +264,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/'
             },
             {
-              owasp_id: 'A09:2021',
+              owasp_id: 'A09:2025',
               category: 'Security Logging and Monitoring Failures',
               title: 'Centralized Security Logging Pipeline',
               status: 'Unable to Verify',
@@ -279,7 +279,7 @@ export const ScannerPage = () => {
               reference: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/'
             },
             {
-              owasp_id: 'A10:2021',
+              owasp_id: 'A01:2025',
               category: 'Server-Side Request Forgery (SSRF)',
               title: 'Server-Side Request Forgery Inspection',
               status: 'Unable to Verify',

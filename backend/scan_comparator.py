@@ -193,16 +193,16 @@ def compare_scans_data(prev_scan: models.Scan, latest_scan: models.Scan) -> Dict
     # 4. OWASP Top 10 Comparison
     # ──────────────────────────────────────────────
     STANDARD_OWASP_CATEGORIES = [
-        {"owasp_id": "A01:2021", "category": "Broken Access Control"},
-        {"owasp_id": "A02:2021", "category": "Cryptographic Failures"},
-        {"owasp_id": "A03:2021", "category": "Injection"},
-        {"owasp_id": "A04:2021", "category": "Insecure Design"},
-        {"owasp_id": "A05:2021", "category": "Security Misconfiguration"},
-        {"owasp_id": "A06:2021", "category": "Vulnerable and Outdated Components"},
-        {"owasp_id": "A07:2021", "category": "Identification and Authentication Failures"},
-        {"owasp_id": "A08:2021", "category": "Software and Data Integrity Failures"},
-        {"owasp_id": "A09:2021", "category": "Security Logging and Monitoring Failures"},
-        {"owasp_id": "A10:2021", "category": "Server-Side Request Forgery (SSRF)"},
+        {"owasp_id": "A01:2025", "category": "Broken Access Control"},
+        {"owasp_id": "A04:2025", "category": "Cryptographic Failures"},
+        {"owasp_id": "A05:2025", "category": "Injection"},
+        {"owasp_id": "A06:2025", "category": "Insecure Design"},
+        {"owasp_id": "A02:2025", "category": "Security Misconfiguration"},
+        {"owasp_id": "A03:2025", "category": "Software Supply Chain Failures"},
+        {"owasp_id": "A07:2025", "category": "Authentication Failures"},
+        {"owasp_id": "A08:2025", "category": "Software or Data Integrity Failures"},
+        {"owasp_id": "A09:2025", "category": "Security Logging & Alerting Failures"},
+        {"owasp_id": "A01:2025", "category": "Mishandling of Exceptional Conditions"},
     ]
 
     prev_owasp_list = (prev_data.get("owasp_summary") or {}).get("findings") or []

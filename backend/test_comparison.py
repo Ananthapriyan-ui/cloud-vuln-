@@ -12,7 +12,7 @@ class TestScanComparisonIntegration(unittest.TestCase):
             "target": "example.com",
             "security_score": 70,
             "cve_findings": [{"cve_id": "CVE-2023-1111", "severity": "High", "cvss_score": 7.5, "title": "Old Issue"}],
-            "owasp_summary": {"findings": [{"owasp_id": "A01:2021", "status": "Failed", "severity": "High"}]},
+            "owasp_summary": {"findings": [{"owasp_id": "A01:2025", "status": "Failed", "severity": "High"}]},
             "headers_summary": {"checks": [{"name": "Content-Security-Policy", "present": False}]},
             "ssl_summary": {"tls_version": "TLSv1.2", "is_valid": True}
         }
@@ -20,7 +20,7 @@ class TestScanComparisonIntegration(unittest.TestCase):
             "target": "example.com",
             "security_score": 90,
             "cve_findings": [],
-            "owasp_summary": {"findings": [{"owasp_id": "A01:2021", "status": "Passed", "severity": "Passed"}]},
+            "owasp_summary": {"findings": [{"owasp_id": "A01:2025", "status": "Passed", "severity": "Passed"}]},
             "headers_summary": {"checks": [{"name": "Content-Security-Policy", "present": True}]},
             "ssl_summary": {"tls_version": "TLSv1.3", "is_valid": True}
         }

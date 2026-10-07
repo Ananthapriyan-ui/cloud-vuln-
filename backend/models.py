@@ -39,6 +39,7 @@ class Scan(Base):
     low_count = Column(Integer, default=0, nullable=False)
     risk_score = Column(Float, default=0.0, nullable=False)
     duration = Column(String(30), default="2m 15s")
+    owasp_version = Column(String(10), default="2025")
     scan_data = Column(Text, nullable=True)  # Store JSON of full analysis results
     created_at = Column(DateTime, default=now_utc, index=True)
 
@@ -97,6 +98,7 @@ class Report(Base):
     executive_summary = Column(Text, nullable=False)
     scan_type = Column(String(100), default="Cloud Misconfig")
     duration = Column(String(30), default="2m 15s")
+    owasp_version = Column(String(10), default="2025")
     html_generated = Column(Boolean, default=False)
     csv_generated = Column(Boolean, default=False)
     file_name = Column(String(255), nullable=True)

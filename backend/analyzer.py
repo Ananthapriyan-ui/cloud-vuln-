@@ -401,7 +401,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
     cors_origin = resp_headers.get("access-control-allow-origin")
     if cors_origin == "*":
         findings.append({
-            "owasp_id": "A01:2021",
+            "owasp_id": "A01:2025",
             "category": "Broken Access Control",
             "title": "Wildcard CORS Access Control Policy Detected",
             "status": "Failed",
@@ -417,7 +417,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     elif not is_https:
         findings.append({
-            "owasp_id": "A01:2021",
+            "owasp_id": "A01:2025",
             "category": "Broken Access Control",
             "title": "Unencrypted HTTP Transport Endpoint",
             "status": "Failed",
@@ -433,7 +433,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     else:
         findings.append({
-            "owasp_id": "A01:2021",
+            "owasp_id": "A01:2025",
             "category": "Broken Access Control",
             "title": "Access Control Transport Policy Compliant",
             "status": "Passed",
@@ -455,7 +455,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
 
     if not is_cert_valid or tls_ver in ["TLSv1", "TLSv1.1"] or not has_hsts:
         findings.append({
-            "owasp_id": "A02:2021",
+            "owasp_id": "A04:2025",
             "category": "Cryptographic Failures",
             "title": "Cryptographic Protection Deficiencies Identified",
             "status": "Failed",
@@ -471,7 +471,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     else:
         findings.append({
-            "owasp_id": "A02:2021",
+            "owasp_id": "A04:2025",
             "category": "Cryptographic Failures",
             "title": "Strong TLS Cryptographic Configuration Verified",
             "status": "Passed",
@@ -490,7 +490,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
     has_csp = "content-security-policy" in resp_headers
     if not has_csp:
         findings.append({
-            "owasp_id": "A03:2021",
+            "owasp_id": "A05:2025",
             "category": "Injection",
             "title": "Missing Content Security Policy (Cross-Site Scripting Injection Risk)",
             "status": "Warning",
@@ -506,7 +506,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     else:
         findings.append({
-            "owasp_id": "A03:2021",
+            "owasp_id": "A05:2025",
             "category": "Injection",
             "title": "Content Security Policy Header Configured",
             "status": "Passed",
@@ -523,7 +523,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
 
     # A04: Insecure Design
     findings.append({
-        "owasp_id": "A04:2021",
+        "owasp_id": "A06:2025",
         "category": "Insecure Design",
         "title": "Architecture & Business Logic Design Inspection",
         "status": "Unable to Verify",
@@ -546,7 +546,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
 
     if server_banner or missing_sec_headers:
         findings.append({
-            "owasp_id": "A05:2021",
+            "owasp_id": "A02:2025",
             "category": "Security Misconfiguration",
             "title": "Security Headers Missing & Technology Banner Disclosure",
             "status": "Failed" if len(missing_sec_headers) >= 2 else "Warning",
@@ -562,7 +562,7 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     else:
         findings.append({
-            "owasp_id": "A05:2021",
+            "owasp_id": "A02:2025",
             "category": "Security Misconfiguration",
             "title": "Security Headers & Server Banner Hardened",
             "status": "Passed",
@@ -581,8 +581,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
     top_cve = cve_records[0] if cve_records else None
     if top_cve and top_cve.get("cvss_score", 0) >= 7.0:
         findings.append({
-            "owasp_id": "A06:2021",
-            "category": "Vulnerable and Outdated Components",
+            "owasp_id": "A03:2025",
+            "category": "Software Supply Chain Failures",
             "title": f"Known Vulnerabilities Identified in Exposed Software ({top_cve.get('cve_id')})",
             "status": "Failed",
             "severity": top_cve.get("severity", "High").capitalize(),
@@ -597,8 +597,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     else:
         findings.append({
-            "owasp_id": "A06:2021",
-            "category": "Vulnerable and Outdated Components",
+            "owasp_id": "A03:2025",
+            "category": "Software Supply Chain Failures",
             "title": "No Critical Outdated Component Vulnerabilities Identified",
             "status": "Passed",
             "severity": "Passed",
@@ -621,8 +621,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
 
     if insecure_cookies:
         findings.append({
-            "owasp_id": "A07:2021",
-            "category": "Identification and Authentication Failures",
+            "owasp_id": "A07:2025",
+            "category": "Authentication Failures",
             "title": "Session Cookies Missing Security Directives (Secure / HttpOnly)",
             "status": "Failed",
             "severity": "Medium",
@@ -637,8 +637,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     else:
         findings.append({
-            "owasp_id": "A07:2021",
-            "category": "Identification and Authentication Failures",
+            "owasp_id": "A07:2025",
+            "category": "Authentication Failures",
             "title": "Authentication Session Transport Controls Verified",
             "status": "Passed",
             "severity": "Passed",
@@ -655,8 +655,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
     # A08: Software and Data Integrity Failures
     if not has_csp:
         findings.append({
-            "owasp_id": "A08:2021",
-            "category": "Software and Data Integrity Failures",
+            "owasp_id": "A08:2025",
+            "category": "Software or Data Integrity Failures",
             "title": "Unverified Third-Party Code Integration Posture",
             "status": "Warning",
             "severity": "Low",
@@ -671,8 +671,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         })
     else:
         findings.append({
-            "owasp_id": "A08:2021",
-            "category": "Software and Data Integrity Failures",
+            "owasp_id": "A08:2025",
+            "category": "Software or Data Integrity Failures",
             "title": "Software Asset Integrity Directives Active",
             "status": "Passed",
             "severity": "Passed",
@@ -688,8 +688,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
 
     # A09: Security Logging and Monitoring Failures
     findings.append({
-        "owasp_id": "A09:2021",
-        "category": "Security Logging and Monitoring Failures",
+        "owasp_id": "A09:2025",
+        "category": "Security Logging & Alerting Failures",
         "title": "Centralized Security Logging & Auditing Baseline",
         "status": "Unable to Verify",
         "severity": "Unable to Verify",
@@ -705,8 +705,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
 
     # A10: Server-Side Request Forgery (SSRF)
     findings.append({
-        "owasp_id": "A10:2021",
-        "category": "Server-Side Request Forgery (SSRF)",
+        "owasp_id": "A01:2025",
+        "category": "Mishandling of Exceptional Conditions",
         "title": "Server-Side Request Forgery Endpoint Inspection",
         "status": "Unable to Verify",
         "severity": "Unable to Verify",
