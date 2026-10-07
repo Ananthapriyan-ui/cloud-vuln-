@@ -270,7 +270,33 @@ def _build_recommendations_section(recommendations: List[str]) -> str:
     )
     return (
         '<div class="section-title">&#9989; Priority Recommendations</div>'
-        f'<div class="info-box"><ul style="list-style:none;padding:0;margin:0;">{items}</ul></div>'
+def _build_ports_section(ports_data: Dict) -> str:
+    if not ports_data or not ports_data.get("ports"):
+        return ""
+    ports = ports_data.get("ports", [])
+    open_c = ports_data.get("open_ports_count", len(ports))
+    total_c = ports_data.get("total_scanned", len(ports))
+    rows = ""
+    for p in ports:
+        port_num = p.get("port")
+        state = p.get("state", "Open")
+        svc = p.get("service", "Unknown")
+        risk = p.get("risk_level", "Low")
+        rstyle = _severity_badge_style(risk)
+        rows += (
+            f'<tr>'
+            f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#00f3ff;border-bottom:1px solid #1e293b;">{port_num}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;"><span style="color:#34d399;font-weight:bold;">{state}</span></td>'
+            f'<td style="padding:8px 12px;font-size:12px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{_esc(svc)}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;"><span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;{rstyle}">{_esc(risk)}</span></td>'
+            f'</tr>'
+        )
+    th = '<th style="padding:10px 12px;text-align:left;color:#94a3b8;font-family:monospace;font-size:11px;text-transform:uppercase;border-bottom:1px solid #1e293b;">'
+    return (
+        f'<div class="section-title">&#128421; Port Scanner Assessment ({open_c} Open of {total_c} Scanned)</div>'
+        '<div style="overflow-x:auto;margin-bottom:24px;"><table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr style="background:#161f33;">{th}Port</th>{th}State</th>{th}Service</th>{th}Risk Level</th></tr></thead>'
+        f'<tbody>{rows}</tbody></table></div>'
     )
 
 CSS = """
@@ -352,6 +378,7 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
     whois = parsed.get("whois_summary") or {}
     ssl_data = parsed.get("ssl_summary") or {}
     headers = parsed.get("headers_summary") or {}
+    ports_data = parsed.get("ports_summary") or {}
     owasp = parsed.get("owasp_summary") or {}
     cve_findings: List[Dict] = parsed.get("cve_findings") or []
     recommendations: List[str] = parsed.get("recommendations") or []
@@ -359,6 +386,7 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
     whois_html = _build_whois_section(whois) if whois else ""
     ssl_html = _build_ssl_section(ssl_data) if ssl_data else ""
     headers_html = _build_headers_section(headers) if headers else ""
+    ports_html = _build_ports_section(ports_data) if ports_data else ""
     owasp_summary_html = _build_owasp_section(owasp) if owasp else ""
     owasp_detail_html = _build_owasp_detail_section(owasp) if owasp else ""
     cve_html = _build_cve_section(cve_findings) if cve_findings else ""
@@ -423,6 +451,7 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
 {whois_html}
 {ssl_html}
 {headers_html}
+{ports_html}
 {owasp_summary_html}
 {owasp_detail_html}
 {cve_html}
@@ -444,27 +473,62 @@ def generate_csv_report(scan_data: Dict[str, Any]) -> str:
     owasp = parsed.get("owasp_summary") or {}
     findings = owasp.get("findings") or []
     cve_findings = parsed.get("cve_findings") or []
+    headers_info = parsed.get("headers_summary") or {}
+    ssl_info = parsed.get("ssl_summary") or {}
+    ports_info = parsed.get("ports_summary") or {}
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["CloudVuln Security Report"])
+    writer.writerow(["CloudVuln Security Assessment Report"])
     writer.writerow([])
+    writer.writerow(["Assessment Metadata", "Value"])
     writer.writerow(["Scan Reference", scan_data.get("scan_ref", "")])
     writer.writerow(["Target", scan_data.get("target", "")])
     writer.writerow(["Provider", scan_data.get("provider", scan_data.get("cloud_provider", ""))])
+    writer.writerow(["Security Score", parsed.get("security_score", "N/A")])
     writer.writerow(["Risk Score", scan_data.get("risk_score", "")])
     writer.writerow(["Status", scan_data.get("status", "")])
     writer.writerow(["Critical Count", scan_data.get("critical_count", 0)])
     writer.writerow(["High Count", scan_data.get("high_count", 0)])
     writer.writerow(["Medium Count", scan_data.get("medium_count", 0)])
     writer.writerow(["Low Count", scan_data.get("low_count", 0)])
-    writer.writerow(["Created At", scan_data.get("created_at", scan_data.get("executed_at", ""))])
+    writer.writerow(["Execution Date", scan_data.get("created_at", scan_data.get("executed_at", ""))])
     writer.writerow([])
+
+    # HTTP Security Headers
+    if headers_info.get("checks"):
+        writer.writerow(["HTTP Security Headers Analysis"])
+        writer.writerow(["Header Name", "Status", "Configured Value", "Risk if Missing", "Recommendation"])
+        for h in headers_info["checks"]:
+            writer.writerow([h.get("name",""), "Present" if h.get("present") else "Missing", h.get("value",""), h.get("risk_if_missing",""), h.get("recommendation","")])
+        writer.writerow([])
+
+    # SSL / TLS Certificate
+    if ssl_info:
+        writer.writerow(["SSL / TLS Configuration Audit"])
+        writer.writerow(["Property", "Value"])
+        writer.writerow(["Certificate Status", ssl_info.get("cert_status", "")])
+        writer.writerow(["Issuer", ssl_info.get("issuer", "")])
+        writer.writerow(["Expiry Date", ssl_info.get("expiry_date", "")])
+        writer.writerow(["TLS Protocol Version", ssl_info.get("tls_version", "")])
+        writer.writerow([])
+
+    # Port Scanner
+    if ports_info.get("ports"):
+        writer.writerow(["Port Scanner Assessment"])
+        writer.writerow(["Port", "State", "Service Name", "Risk Level"])
+        for p in ports_info["ports"]:
+            writer.writerow([p.get("port",""), p.get("state",""), p.get("service",""), p.get("risk_level","")])
+        writer.writerow([])
+
+    # OWASP Top 10:2025
     if findings:
-        writer.writerow(["OWASP Top 10 Findings"])
+        writer.writerow(["OWASP Top 10:2025 Findings"])
         writer.writerow(["OWASP ID", "Category", "Title", "Status", "Severity", "Description", "Evidence", "Affected Component", "Impact", "Recommendation", "CVSS Score", "Related CVE", "Reference"])
         for f in findings:
             writer.writerow([f.get("owasp_id",""), f.get("category",""), f.get("title",""), f.get("status",""), f.get("severity",""), f.get("description",""), f.get("evidence",""), f.get("affected_component",""), f.get("impact",""), f.get("recommendation",""), f.get("cvss_score",""), f.get("related_cve",""), f.get("reference","")])
         writer.writerow([])
+
+    # CVE Findings
     if cve_findings:
         writer.writerow(["CVE / NVD Findings"])
         writer.writerow(["CVE ID", "Severity", "CVSS Score", "Description", "Published Date", "Reference URL"])

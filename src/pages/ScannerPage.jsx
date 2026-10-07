@@ -38,7 +38,7 @@ export const ScannerPage = () => {
     { id: 'HTTP Security Headers Check', label: 'HTTP Security Headers Check', desc: 'Audit response security headers (CSP, HSTS, X-Frame-Options, etc.).' },
     { id: 'SSL/TLS Checker', label: 'SSL/TLS Checker', desc: 'Verify certificate validity, protocol versions (TLS 1.2/1.3), and ciphers.' },
     { id: 'Port Scanner', label: 'Port Scanner', desc: 'Inspect open network ports and services exposed on authorized target.' },
-    { id: 'OWASP Top 10', label: 'OWASP Top 10', desc: 'Defensive security assessment mapping findings against OWASP Top 10 (2021) categories.' },
+    { id: 'OWASP Top 10', label: 'OWASP Top 10:2025', desc: 'Defensive security assessment mapping findings against official OWASP Top 10:2025 categories.' },
     { id: 'WHOIS Lookup', label: 'WHOIS Lookup', desc: 'Retrieve domain registration, registrar info, and authoritative name servers.' }
   ];
 
@@ -114,219 +114,13 @@ export const ScannerPage = () => {
           console.warn('Failed to auto-save scan record', e);
         }
       } else {
-        throw new Error('Analysis request failed');
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Server returned status ${response.status}: Failed to complete assessment.`);
       }
     } catch (error) {
-      console.warn('Backend endpoint unavailable, rendering local analysis dataset', error);
-      // Fallback OWASP dataset
-      setAnalysisResult({
-        target: targetUrl,
-        ip_address: '192.168.1.104',
-        scan_timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
-        status: 'Completed',
-        risk_level: 'Medium',
-        security_score: 75,
-        critical_count: 0,
-        high_count: 2,
-        medium_count: 2,
-        low_count: 0,
-        owasp_summary: {
-          total_checks: 10,
-          passed_checks: 4,
-          failed_checks: 3,
-          warnings_count: 1,
-          unable_to_verify_count: 2,
-          critical_count: 0,
-          high_count: 2,
-          medium_count: 2,
-          low_count: 0,
-          overall_score: 75,
-          risk_level: 'Medium',
-          findings: [
-            {
-              owasp_id: 'A01:2025',
-              category: 'Broken Access Control',
-              title: 'Access Control Transport Policy Compliant',
-              status: 'Passed',
-              severity: 'Passed',
-              description: 'Transport channel requires TLS encryption and no wildcard CORS policy was identified on public headers.',
-              evidence: `Target HTTPS URL: https://${targetUrl}, CORS: Restricted`,
-              affected_component: 'HTTP Response Headers',
-              impact: 'None observed on public boundary headers.',
-              recommendation: 'Continue enforcing granular role-based access control (RBAC) on internal server routes.',
-              cvss_score: 0.0,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A01_2021-Broken_Access_Control/'
-            },
-            {
-              owasp_id: 'A04:2025',
-              category: 'Cryptographic Failures',
-              title: 'HSTS Transport Header Missing',
-              status: 'Failed',
-              severity: 'Medium',
-              description: 'Target endpoint does not set Strict-Transport-Security response header.',
-              evidence: 'Strict-Transport-Security header is absent.',
-              affected_component: 'HTTP Security Directives',
-              impact: "Vulnerable to HTTP downgrade and SSL stripping attacks.",
-              recommendation: "Configure HSTS header: Strict-Transport-Security: max-age=31536000; includeSubDomains.",
-              cvss_score: 6.5,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A02_2021-Cryptographic_Failures/'
-            },
-            {
-              owasp_id: 'A05:2025',
-              category: 'Injection',
-              title: 'Missing Content Security Policy (CSP)',
-              status: 'Warning',
-              severity: 'High',
-              description: 'Content-Security-Policy header is absent from server HTTP responses.',
-              evidence: 'Header Content-Security-Policy missing.',
-              affected_component: 'HTTP Response Headers',
-              impact: 'Exposes users to Cross-Site Scripting (XSS) script injection.',
-              recommendation: "Deploy a strict Content-Security-Policy restricting script-src and object-src.",
-              cvss_score: 7.2,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A03_2021-Injection/'
-            },
-            {
-              owasp_id: 'A06:2025',
-              category: 'Insecure Design',
-              title: 'Architecture & Workflow Inspection',
-              status: 'Unable to Verify',
-              severity: 'Unable to Verify',
-              description: 'Internal threat modeling and business logic workflow verification requires source code audit.',
-              evidence: 'Black-box non-destructive scan cannot inspect internal business logic state machine.',
-              affected_component: 'Application Business Logic',
-              impact: 'Potential logic design flaws cannot be evaluated passively.',
-              recommendation: 'Perform formal threat modeling and architectural security review.',
-              cvss_score: null,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A04_2021-Insecure_Design/'
-            },
-            {
-              owasp_id: 'A02:2025',
-              category: 'Security Misconfiguration',
-              title: 'Technology Banner & Header Misconfiguration',
-              status: 'Failed',
-              severity: 'Medium',
-              description: 'Server discloses technology stack metadata in HTTP headers.',
-              evidence: 'Server: Apache/2.4.41 (Ubuntu)',
-              affected_component: 'Web Server Header',
-              impact: 'Facilitates targeted software vulnerability exploitation.',
-              recommendation: 'Suppress Server and X-Powered-By response headers.',
-              cvss_score: 5.3,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A05_2021-Security_Misconfiguration/'
-            },
-            {
-              owasp_id: 'A03:2025',
-              category: 'Vulnerable and Outdated Components',
-              title: 'Known Public CVE Match in Server Stack',
-              status: 'Failed',
-              severity: 'High',
-              description: 'Identified component matches active CVEs in National Vulnerability Database.',
-              evidence: 'Apache 2.4.41 matches CVE-2021-41773 (CVSS 7.5)',
-              affected_component: 'Apache HTTP Server',
-              impact: 'Allows path traversal and potential remote code execution.',
-              recommendation: 'Upgrade Apache HTTP Server to version >= 2.4.50.',
-              cvss_score: 7.5,
-              related_cve: 'CVE-2021-41773',
-              reference: 'https://nvd.nist.gov/vuln/detail/CVE-2021-41773'
-            },
-            {
-              owasp_id: 'A07:2025',
-              category: 'Identification and Authentication Failures',
-              title: 'Authentication Session Cookie Directive Verified',
-              status: 'Passed',
-              severity: 'Passed',
-              description: 'Session authorization cookies enforce Secure and HttpOnly flags.',
-              evidence: 'Set-Cookie: session=...; Secure; HttpOnly; SameSite=Lax',
-              affected_component: 'Session Transport Engine',
-              impact: 'Prevents client-side script access to session credentials.',
-              recommendation: 'Maintain strict cookie security flags across all domain cookies.',
-              cvss_score: 0.0,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/'
-            },
-            {
-              owasp_id: 'A08:2025',
-              category: 'Software and Data Integrity Failures',
-              title: 'Software Asset Delivery Directives Active',
-              status: 'Passed',
-              severity: 'Passed',
-              description: 'Client script delivery follows baseline HTTP security boundary checks.',
-              evidence: 'Assets fetched over HTTPS with SRI integrity hash validation.',
-              affected_component: 'Asset Pipeline',
-              impact: 'Mitigates CDN script tampering risks.',
-              recommendation: 'Sign build artifacts and monitor third-party CDN libraries.',
-              cvss_score: 0.0,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/'
-            },
-            {
-              owasp_id: 'A09:2025',
-              category: 'Security Logging and Monitoring Failures',
-              title: 'Centralized Security Logging Pipeline',
-              status: 'Unable to Verify',
-              severity: 'Unable to Verify',
-              description: 'Internal SIEM log ingestion and alert threshold pipelines require internal SecOps review.',
-              evidence: 'Black-box network probe cannot verify internal log streaming.',
-              affected_component: 'Logging Pipeline',
-              impact: 'Breach detection delays if logging is disabled.',
-              recommendation: 'Ensure API access logs stream to an immutable SIEM platform.',
-              cvss_score: null,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/'
-            },
-            {
-              owasp_id: 'A01:2025',
-              category: 'Server-Side Request Forgery (SSRF)',
-              title: 'Server-Side Request Forgery Inspection',
-              status: 'Unable to Verify',
-              severity: 'Unable to Verify',
-              description: 'Safe verification of URL fetch handlers requires authenticated API spec review.',
-              evidence: 'Out-of-band HTTP listener callback was not executed passively.',
-              affected_component: 'Backend URL Fetchers',
-              impact: 'Unrestricted URL fetchers allow internal cloud metadata pivoting.',
-              recommendation: 'Implement strict destination IP allowlists on fetch handlers.',
-              cvss_score: null,
-              related_cve: null,
-              reference: 'https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/'
-            }
-          ]
-        },
-        ssl_summary: {
-          cert_status: 'Valid',
-          issuer: 'DigiCert Global TLS RSA SHA256 CA',
-          expiry_date: '2026-11-28',
-          tls_version: 'TLSv1.3',
-          is_valid: true,
-          days_until_expiration: 124,
-          recommendations: [
-            'TLS 1.3 Cipher Suite verified (ECDHE-RSA-AES128-GCM-SHA256).',
-            'Ensure HTTP Strict Transport Security (HSTS) preload header is attached.'
-          ]
-        },
-        headers_summary: {
-          score: 50,
-          passed_count: 3,
-          total_count: 6,
-          checks: [
-            { name: 'Content-Security-Policy', present: false, value: 'Missing', risk_if_missing: 'High Risk - Allows execution of untrusted inline scripts (XSS).', recommendation: 'Define a robust CSP policy limiting script-src.' },
-            { name: 'Strict-Transport-Security', present: true, value: 'max-age=31536000', risk_if_missing: 'Medium Risk - Allows HTTP downgrade attacks.', recommendation: 'Set HSTS header.' },
-            { name: 'X-Frame-Options', present: true, value: 'DENY', risk_if_missing: 'Medium Risk - Clickjacking risk.', recommendation: 'Add X-Frame-Options: DENY.' },
-            { name: 'X-Content-Type-Options', present: true, value: 'nosniff', risk_if_missing: 'Low Risk - MIME-sniffing vulnerability.', recommendation: 'Add X-Content-Type-Options: nosniff.' },
-            { name: 'Referrer-Policy', present: false, value: 'Missing', risk_if_missing: 'Low Risk - Sensitive URLs leak in HTTP Referer.', recommendation: 'Set Referrer-Policy: strict-origin-when-cross-origin.' },
-            { name: 'Permissions-Policy', present: false, value: 'Missing', risk_if_missing: 'Info - Unrestricted browser API access.', recommendation: 'Specify Permissions-Policy.' }
-          ]
-        },
-        recommendations: [
-          'Deploy Content-Security-Policy header to prevent XSS injection.',
-          'Set Strict-Transport-Security header (max-age=31536000).',
-          'Restrict CORS Access Control policies to authorized domains.',
-          'Suppress Server and X-Powered-By HTTP response banners.'
-        ]
-      });
+      console.error("Target assessment failed", error);
+      addToast(error.message || "Target assessment failed. Check target URL and network connectivity.", "error");
+      setAnalysisResult(null);
     } finally {
       setIsAnalyzing(false);
     }
@@ -507,8 +301,8 @@ export const ScannerPage = () => {
       {(selectedScanType === 'OWASP Top 10' || selectedScanType === 'Full Audit') && (
         <Card className="border-cyan-500/30 shadow-[0_0_20px_rgba(0,243,255,0.05)]">
           <CardHeader>
-            <CardTitle icon={ShieldAlert} subtitle="OWASP Top 10 (2021) Web Security Assessment & Verification Matrix">
-              OWASP Top 10 Security Assessment Results
+            <CardTitle icon={ShieldAlert} subtitle="Official OWASP Top 10:2025 Web Security Assessment & Verification Matrix">
+              OWASP Top 10:2025 Security Assessment Results
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -631,6 +425,78 @@ export const ScannerPage = () => {
                     </tbody>
                   </table>
                 </div>
+              </>
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Port Scanner Module */}
+      {(selectedScanType === 'Port Scanner' || selectedScanType === 'OWASP Top 10') && (
+        <Card className="border-cyan-500/20">
+          <CardHeader>
+            <CardTitle icon={Server} subtitle="Authorized socket probe of perimeter network services">
+              Authorized Port Scanner
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isAnalyzing ? (
+              <Skeleton className="h-48 w-full" />
+            ) : analysisResult?.ports_summary ? (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] font-mono text-slate-400 uppercase">Total Probed</span>
+                    <p className="text-xl font-bold font-mono text-slate-100">{analysisResult.ports_summary.total_probed}</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] font-mono text-slate-400 uppercase">Open Ports</span>
+                    <p className="text-xl font-bold font-mono text-amber-400">{analysisResult.ports_summary.open_ports_count}</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] font-mono text-slate-400 uppercase">Closed / Filtered</span>
+                    <p className="text-xl font-bold font-mono text-slate-300">{analysisResult.ports_summary.closed_ports_count}</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                    <span className="text-[10px] font-mono text-slate-400 uppercase">Perimeter Risk</span>
+                    <div>
+                      <Badge variant={analysisResult.ports_summary.risk_level === 'CRITICAL' ? 'critical' : analysisResult.ports_summary.risk_level === 'HIGH' ? 'high' : 'success'} size="sm">
+                        {analysisResult.ports_summary.risk_level}
+                      </Badge>
+                    </div>
+                  </div>
+                </div>
+
+                {analysisResult.ports_summary.open_ports?.length > 0 ? (
+                  <div className="overflow-x-auto rounded-xl border border-slate-800">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-900 text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800">
+                        <tr>
+                          <th className="p-3">Port</th>
+                          <th className="p-3">Service</th>
+                          <th className="p-3">State</th>
+                          <th className="p-3">Severity</th>
+                          <th className="p-3">Description</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800 font-mono text-xs">
+                        {analysisResult.ports_summary.open_ports.map((p, idx) => (
+                          <tr key={idx} className="hover:bg-slate-900/40">
+                            <td className="p-3 font-bold text-cyan-400">{p.port}</td>
+                            <td className="p-3 text-slate-200">{p.service}</td>
+                            <td className="p-3"><Badge variant="warning" size="sm">OPEN</Badge></td>
+                            <td className="p-3 text-slate-300">{p.severity || 'Medium'}</td>
+                            <td className="p-3 text-slate-400 font-sans">{p.description}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 text-xs font-mono text-slate-400">
+                    No open perimeter ports identified on authorized target (probed 20 standard ports).
+                  </div>
+                )}
               </>
             ) : null}
           </CardContent>

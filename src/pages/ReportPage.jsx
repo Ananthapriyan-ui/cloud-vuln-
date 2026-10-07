@@ -75,6 +75,8 @@ export const ReportPage = () => {
     reportData?.scan_data?.executive_summary ||
     `Automated security posture analysis completed for ${reportMeta.target}. Overall calculated risk score: ${reportMeta.overallScore}/10.`;
 
+  const portsSummary = reportData?.scan_data?.ports_summary || null;
+  const headersSummary = reportData?.scan_data?.headers_summary || null;
   const whoisSummary = reportData?.scan_data?.whois_summary || null;
   const owaspFindings = reportData?.scan_data?.owasp_summary?.findings || [];
   const sslSummary = reportData?.scan_data?.ssl_summary || null;
@@ -89,7 +91,7 @@ export const ReportPage = () => {
   };
 
   const handleDownload = async (format = 'html') => {
-    addToast(`Generating and downloading HTML report...`, 'info');
+    addToast(`Generating and downloading ${format.toUpperCase()} report...`, 'info');
     try {
       const downloadUrl = api.getReportDownloadUrl(reportMeta.scanId, format);
       const token = localStorage.getItem('cloudvuln_access_token');
@@ -108,7 +110,7 @@ export const ReportPage = () => {
       a.click();
       window.URL.revokeObjectURL(url);
       a.remove();
-      addToast(`HTML Report downloaded successfully!`, 'success');
+      addToast(`${format.toUpperCase()} Report downloaded successfully!`, 'success');
     } catch (err) {
       console.error(err);
       addToast(`Failed to download report: ${err.message}`, 'error');
@@ -158,13 +160,20 @@ export const ReportPage = () => {
           <span>Back to Scan History</span>
         </button>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center flex-wrap gap-3">
           <Button
             variant="outline"
             icon={Eye}
             onClick={() => setIsPreviewModalOpen(true)}
           >
             View HTML Report
+          </Button>
+          <Button
+            variant="outline"
+            icon={Download}
+            onClick={() => handleDownload('csv')}
+          >
+            Download CSV Report
           </Button>
           <Button
             variant="primary"
@@ -231,7 +240,7 @@ export const ReportPage = () => {
                 <span className="font-mono text-xs font-bold text-cyan-400 flex items-center gap-1.5">
                   <ShieldAlert className="w-4 h-4" /> OWASP Top 10 Security Assessment Breakdown
                 </span>
-                <Badge variant="cyan" size="sm">OWASP 2021 Compliant</Badge>
+                <Badge variant="cyan" size="sm">OWASP Top 10:2025 Standard</Badge>
               </div>
 
               <div className="overflow-x-auto">
@@ -264,6 +273,94 @@ export const ReportPage = () => {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* HTTP Security Headers Breakdown */}
+          {headersSummary?.findings && headersSummary.findings.length > 0 && (
+            <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <span className="font-mono text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                  <Lock className="w-4 h-4" /> HTTP Security Headers Audit
+                </span>
+                <Badge variant={headersSummary.grade === 'A' ? 'success' : headersSummary.grade === 'B' ? 'info' : 'warning'} size="sm">
+                  Grade {headersSummary.grade || 'N/A'} ({headersSummary.present_count || 0}/{headersSummary.total_checked || 0} Present)
+                </Badge>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800 bg-slate-900">
+                    <tr>
+                      <th className="p-2.5">Header</th>
+                      <th className="p-2.5">Status</th>
+                      <th className="p-2.5">Severity</th>
+                      <th className="p-2.5">Observed Value</th>
+                      <th className="p-2.5">Recommendation</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                    {headersSummary.findings.map((h, idx) => (
+                      <tr key={idx} className="hover:bg-slate-900/40">
+                        <td className="p-2.5 font-bold text-slate-200">{h.header}</td>
+                        <td className="p-2.5">
+                          <Badge variant={h.present ? 'success' : 'critical'} size="sm">
+                            {h.present ? 'Present' : 'Missing'}
+                          </Badge>
+                        </td>
+                        <td className="p-2.5 text-slate-300">{h.severity || 'Medium'}</td>
+                        <td className="p-2.5 text-slate-400 font-sans truncate max-w-xs">{h.value || 'None'}</td>
+                        <td className="p-2.5 text-slate-400 font-sans">{h.recommendation || 'N/A'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Port Scanner Breakdown */}
+          {portsSummary && (
+            <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <span className="font-mono text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+                  <Server className="w-4 h-4" /> Authorized Port Probing Audit
+                </span>
+                <Badge variant={portsSummary.risk_level === 'CRITICAL' ? 'critical' : portsSummary.risk_level === 'HIGH' ? 'high' : 'success'} size="sm">
+                  {portsSummary.open_ports_count} Open Ports ({portsSummary.risk_level || 'LOW'} Risk)
+                </Badge>
+              </div>
+
+              {portsSummary.open_ports && portsSummary.open_ports.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800 bg-slate-900">
+                      <tr>
+                        <th className="p-2.5">Port</th>
+                        <th className="p-2.5">Service</th>
+                        <th className="p-2.5">State</th>
+                        <th className="p-2.5">Severity</th>
+                        <th className="p-2.5">Description</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                      {portsSummary.open_ports.map((p, idx) => (
+                        <tr key={idx} className="hover:bg-slate-900/40">
+                          <td className="p-2.5 font-bold text-cyan-400">{p.port}</td>
+                          <td className="p-2.5 text-slate-200">{p.service}</td>
+                          <td className="p-2.5"><Badge variant="warning" size="sm">OPEN</Badge></td>
+                          <td className="p-2.5 text-slate-300">{p.severity || 'Medium'}</td>
+                          <td className="p-2.5 text-slate-400 font-sans">{p.description || 'N/A'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-4 text-xs font-mono text-slate-400 bg-slate-900/50 rounded-lg">
+                  No open high-risk perimeter ports detected on common service ports (total probed: {portsSummary.total_probed || 20}).
+                </div>
+              )}
             </div>
           )}
 

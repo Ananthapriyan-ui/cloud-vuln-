@@ -141,6 +141,8 @@ class ScanCreate(BaseModel):
     low_count: Optional[int] = 0
     risk_score: Optional[float] = 0.0
     duration: Optional[str] = "2m 15s"
+    owasp_version: Optional[str] = "2025"
+    user_id: Optional[int] = None
     scan_data: Optional[str] = None
 
     @field_validator("target")
@@ -182,6 +184,8 @@ class ScanResponse(BaseModel):
     low_count: int
     risk_score: float
     duration: str
+    owasp_version: Optional[str] = "2025"
+    user_id: Optional[int] = None
     scan_data: Optional[str] = None
     created_at: datetime
 
@@ -341,6 +345,24 @@ class OWASPSummary(BaseModel):
     findings: List[OWASPFindingItem] = []
 
 
+class PortInfo(BaseModel):
+    port: int
+    state: str
+    service: str
+    risk_level: Optional[str] = "Low"
+
+
+class PortScanSummary(BaseModel):
+    target: str
+    ip_address: str
+    open_ports_count: int
+    closed_ports_count: int
+    total_scanned: int
+    ports: List[PortInfo] = []
+    status: str = "Completed"
+    scan_duration: Optional[str] = None
+
+
 class SecurityAnalysisResponse(BaseModel):
     target: str
     ip_address: str
@@ -357,6 +379,7 @@ class SecurityAnalysisResponse(BaseModel):
     owasp_summary: Optional[OWASPSummary] = None
     ssl_summary: SSLSummary
     headers_summary: HeaderSummary
+    ports_summary: Optional[PortScanSummary] = None
     cve_findings: List[CVEResult]
     recommendations: List[str]
 

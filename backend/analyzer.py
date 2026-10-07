@@ -4,31 +4,32 @@ import datetime
 import urllib.parse
 import urllib.request
 import json
-from typing import Dict, List, Any
+import time
+from typing import Dict, List, Any, Optional
 
 def get_target_ip(hostname: str) -> str:
-    """Resolve domain or hostname to IP address."""
+    """Resolve domain or hostname to IP address using system DNS resolver."""
     try:
-        # Clean hostname from URL if necessary
         if "://" in hostname:
             hostname = urllib.parse.urlparse(hostname).netloc
-        hostname = hostname.split(":")[0]
+        hostname = hostname.split(":")[0].strip()
+        if not hostname:
+            return "Unavailable"
         return socket.gethostbyname(hostname)
     except Exception:
-        return "192.168.1.104"  # Default fallback IP for local/dev analysis
+        return "Unavailable"
 
 def analyze_ssl(target_url: str) -> Dict[str, Any]:
-    """Inspect SSL/TLS certificate details and security posture."""
-    parsed = urllib.parse.urlparse(target_url if "://" in target_url else f"https://{target_url}")
-    hostname = parsed.netloc or parsed.path
-    hostname = hostname.split(":")[0]
+    """Inspect live SSL/TLS certificate details and security posture without mock data."""
+    formatted_url = target_url if "://" in target_url else f"https://{target_url}"
+    parsed = urllib.parse.urlparse(formatted_url)
+    hostname = (parsed.netloc or parsed.path).split(":")[0].strip()
     port = 443
 
     recommendations = []
-    
     try:
         context = ssl.create_default_context()
-        with socket.create_connection((hostname, port), timeout=3) as sock:
+        with socket.create_connection((hostname, port), timeout=4) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert = ssock.getpeercert() or {}
                 cipher = ssock.cipher()
@@ -43,84 +44,104 @@ def analyze_ssl(target_url: str) -> Dict[str, Any]:
                             key, val = rdn[0]
                             issuer_dict[str(key)] = str(val)
 
-                issuer_name = issuer_dict.get('organizationName') or issuer_dict.get('commonName') or "Let's Encrypt Authority X3"
+                issuer_name = issuer_dict.get('organizationName') or issuer_dict.get('commonName') or "Unknown Issuer"
 
                 # Expiry check
                 not_after_str = cert.get('notAfter')
                 now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
                 if isinstance(not_after_str, str):
-                    expiry_date = datetime.datetime.strptime(not_after_str, '%b %d %H:%M:%S %Y %Z')
-                    days_until_exp = (expiry_date - now_utc).days
+                    try:
+                        expiry_date = datetime.datetime.strptime(not_after_str, '%b %d %H:%M:%S %Y %Z')
+                        days_until_exp = (expiry_date - now_utc).days
+                        expiry_date_str = expiry_date.strftime('%Y-%m-%d')
+                    except Exception:
+                        days_until_exp = 0
+                        expiry_date_str = not_after_str
                 else:
-                    expiry_date = now_utc + datetime.timedelta(days=90)
-                    days_until_exp = 90
+                    days_until_exp = 0
+                    expiry_date_str = "Not Available"
 
                 is_valid = days_until_exp > 0
-                if days_until_exp < 30:
+                if days_until_exp < 0:
+                    recommendations.append(f"CRITICAL: Certificate expired {-days_until_exp} days ago. Renew immediately.")
+                elif days_until_exp < 30:
                     recommendations.append(f"Certificate expires in {days_until_exp} days. Schedule automated ACME renewal.")
                 else:
-                    recommendations.append("Certificate validity is healthy. Maintain automated 90-day renewal cycle.")
+                    recommendations.append(f"Certificate validity is active ({days_until_exp} days remaining). Maintain automated renewal cycle.")
 
                 if version in ["TLSv1", "TLSv1.1"]:
-                    recommendations.append("Deprecated TLS version detected. Upgrade server policy to mandate TLS 1.2 or TLS 1.3.")
+                    recommendations.append(f"Deprecated TLS version ({version}) detected. Mandate TLS 1.2 or TLS 1.3.")
+                elif version:
+                    recommendations.append(f"Modern TLS protocol active ({version}).")
+
+                cipher_name = cipher[0] if cipher and isinstance(cipher, tuple) else "Not Available"
 
                 return {
                     "cert_status": "Valid" if is_valid else "Expired",
                     "issuer": issuer_name,
-                    "expiry_date": expiry_date.strftime('%Y-%m-%d'),
-                    "tls_version": version or "TLSv1.3",
+                    "expiry_date": expiry_date_str,
+                    "tls_version": version or "Unknown",
+                    "cipher": cipher_name,
                     "is_valid": is_valid,
                     "days_until_expiration": max(days_until_exp, 0),
                     "recommendations": recommendations
                 }
-    except Exception as e:
-        # Fallback structured mock analysis for educational/lab targets
+    except ssl.SSLCertVerificationError as e:
         return {
-            "cert_status": "Valid",
-            "issuer": "DigiCert Global TLS RSA SHA256 CA",
-            "expiry_date": (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=124)).strftime('%Y-%m-%d'),
-            "tls_version": "TLSv1.3",
-            "is_valid": True,
-            "days_until_expiration": 124,
-            "recommendations": [
-                "TLS 1.3 Cipher Suite verified (ECDHE-RSA-AES128-GCM-SHA256).",
-                "Ensure HTTP Strict Transport Security (HSTS) preload header is attached."
-            ]
+            "cert_status": "Invalid / Untrusted",
+            "issuer": "Untrusted / Self-Signed",
+            "expiry_date": "Not Available",
+            "tls_version": "TLS Handshake Failed",
+            "cipher": "Not Available",
+            "is_valid": False,
+            "days_until_expiration": 0,
+            "recommendations": [f"SSL certificate verification failed: {e.verify_message}. Install a valid certificate from a recognized Certificate Authority."]
+        }
+    except Exception as e:
+        return {
+            "cert_status": "Unable to Verify",
+            "issuer": "Not Available",
+            "expiry_date": "Not Available",
+            "tls_version": "Not Available",
+            "cipher": "Not Available",
+            "is_valid": False,
+            "days_until_expiration": 0,
+            "recommendations": [f"TLS connection on port 443 failed: {str(e)}. Target host may not support HTTPS or is blocking connections."]
         }
 
 def analyze_headers(target_url: str) -> Dict[str, Any]:
-    """Check presence or absence of standard HTTP security headers."""
+    """Check presence and value of standard HTTP security headers using live response inspection."""
     formatted_url = target_url if "://" in target_url else f"https://{target_url}"
     
     header_definitions = [
         {
             "name": "Content-Security-Policy",
-            "risk_if_missing": "High Risk - Allows execution of untrusted inline scripts and cross-site scripting (XSS).",
-            "recommendation": "Define a robust CSP policy limiting script-src and object-src to trusted domains."
+            "risk_if_missing": "High Risk - Permits unauthorized script execution and cross-site scripting (XSS).",
+            "recommendation": "Define a robust Content-Security-Policy (CSP) limiting script-src and object-src to trusted sources."
         },
         {
             "name": "Strict-Transport-Security",
             "risk_if_missing": "Medium Risk - Allows HTTP downgrade attacks and SSL stripping.",
-            "recommendation": "Set HSTS header: Strict-Transport-Security: max-age=31536000; includeSubDomains."
+            "recommendation": "Set Strict-Transport-Security: max-age=31536000; includeSubDomains."
         },
         {
             "name": "X-Frame-Options",
-            "risk_if_missing": "Medium Risk - Site can be embedded in malicious iframes (Clickjacking risk).",
-            "recommendation": "Add X-Frame-Options: DENY or SAMEORIGIN."
+            "risk_if_missing": "Medium Risk - Site can be framed inside malicious parent contexts (Clickjacking).",
+            "recommendation": "Add X-Frame-Options: DENY or SAMEORIGIN header."
         },
         {
             "name": "X-Content-Type-Options",
-            "risk_if_missing": "Low Risk - Browser may misinterpret asset MIME types (MIME-sniffing).",
+            "risk_if_missing": "Low Risk - Client browser may execute assets as incorrect MIME types (MIME-sniffing).",
             "recommendation": "Add X-Content-Type-Options: nosniff header."
         },
         {
             "name": "Referrer-Policy",
-            "risk_if_missing": "Low Risk - Sensitives URLs or token query params may leak in HTTP Referer.",
+            "risk_if_missing": "Low Risk - URLs with sensitive query parameters may leak in HTTP Referer.",
             "recommendation": "Set Referrer-Policy: strict-origin-when-cross-origin."
         },
         {
             "name": "Permissions-Policy",
-            "risk_if_missing": "Info - Unrestricted browser feature API access (Camera, Microphone, Geolocation).",
+            "risk_if_missing": "Info - Unrestricted browser hardware API access (Camera, Microphone, Geolocation).",
             "recommendation": "Specify Permissions-Policy: camera=(), microphone=(), geolocation=()."
         }
     ]
@@ -131,48 +152,38 @@ def analyze_headers(target_url: str) -> Dict[str, Any]:
     try:
         req = urllib.request.Request(
             formatted_url,
-            headers={'User-Agent': 'CloudVuln-Security-Auditor/1.0'}
+            headers={'User-Agent': 'CloudVuln-Security-Auditor/2.0'}
         )
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            resp_headers = {k.title(): v for k, v in resp.headers.items()}
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            resp_headers = {k.lower(): v for k, v in resp.headers.items()}
             
             for h in header_definitions:
-                present = h["name"] in resp_headers or h["name"].lower() in resp_headers
-                val = resp_headers.get(h["name"]) or resp_headers.get(h["name"].lower()) or None
+                h_key = h["name"].lower()
+                val = resp_headers.get(h_key)
+                present = val is not None
                 if present:
                     passed_count += 1
 
                 checks.append({
                     "name": h["name"],
                     "present": present,
-                    "value": val or ("Configured" if present else "Missing"),
+                    "value": val if present else "Missing",
                     "risk_if_missing": h["risk_if_missing"],
                     "recommendation": h["recommendation"]
                 })
-    except Exception:
-        # Fallback simulation audit for educational demonstration
-        mock_presence = {
-            "Content-Security-Policy": False,
-            "Strict-Transport-Security": True,
-            "X-Frame-Options": True,
-            "X-Content-Type-Options": True,
-            "Referrer-Policy": False,
-            "Permissions-Policy": False
-        }
+    except Exception as e:
+        # If target fails to respond, report actual error status without generating fake headers
         for h in header_definitions:
-            is_present = mock_presence.get(h["name"], True)
-            if is_present:
-                passed_count += 1
             checks.append({
                 "name": h["name"],
-                "present": is_present,
-                "value": "max-age=31536000" if is_present and h["name"] == "Strict-Transport-Security" else ("nosniff" if is_present and h["name"] == "X-Content-Type-Options" else ("DENY" if is_present else "Missing")),
-                "risk_if_missing": h["risk_if_missing"],
+                "present": False,
+                "value": "Unable to Verify",
+                "risk_if_missing": f"Probe failed: {str(e)}",
                 "recommendation": h["recommendation"]
             })
 
     total_count = len(header_definitions)
-    score = int((passed_count / total_count) * 100)
+    score = int((passed_count / total_count) * 100) if total_count > 0 else 0
 
     return {
         "score": score,
@@ -182,17 +193,15 @@ def analyze_headers(target_url: str) -> Dict[str, Any]:
     }
 
 def query_nvd_cve(keyword: str) -> List[Dict[str, Any]]:
-    """Fetch live CVE records matching software or product name from NVD API or fallback cache."""
+    """Fetch live CVE records matching software or product name from official NVD REST API v2.0."""
     keyword_clean = keyword.strip()
-    if not keyword_clean:
-        keyword_clean = "Tomcat"
+    if not keyword_clean or len(keyword_clean) < 2:
+        return []
 
-    # 1. Attempt live query against official NVD REST API v2.0
     try:
         url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={urllib.parse.quote(keyword_clean)}&resultsPerPage=6"
-        headers = {'User-Agent': 'CloudVuln-SecOps-Dashboard/1.0'}
+        headers = {'User-Agent': 'CloudVuln-SecOps-Auditor/2.0'}
 
-        # Attach API key if configured — raises rate limit from 5 req/30s to 50 req/30s
         try:
             import config as _config
             nvd_key = (_config.settings.NVD_API_KEY or "").strip()
@@ -202,8 +211,8 @@ def query_nvd_cve(keyword: str) -> List[Dict[str, Any]]:
             pass
 
         req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, timeout=8) as response:
-            data = json.loads(response.read().decode())
+        with urllib.request.urlopen(req, timeout=6) as response:
+            data = json.loads(response.read().decode('utf-8'))
             cve_items = data.get("vulnerabilities", [])
             
             results = []
@@ -223,11 +232,11 @@ def query_nvd_cve(keyword: str) -> List[Dict[str, Any]]:
                     cvss_data = metrics["cvssMetricV30"][0].get("cvssData", {})
 
                 if cvss_data:
-                    score = cvss_data.get("baseScore", 7.5)
-                    severity = cvss_data.get("baseSeverity", "HIGH").lower()
+                    score = float(cvss_data.get("baseScore", 5.0))
+                    severity = str(cvss_data.get("baseSeverity", "HIGH")).lower()
                 else:
-                    score = 7.5
-                    severity = "high"
+                    score = 5.0
+                    severity = "medium"
 
                 results.append({
                     "cve_id": cve_id,
@@ -238,61 +247,45 @@ def query_nvd_cve(keyword: str) -> List[Dict[str, Any]]:
                     "reference_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}"
                 })
             
-            if results:
-                return results
-    except Exception as e:
-        print(f"NVD API request fallback triggered for query '{keyword_clean}': {e}")
-
-    # 2. High-quality curated NVD CVE cache fallback for fast local demonstration
-    curated_database = [
-        {
-            "cve_id": "CVE-2026-1184",
-            "cvss_score": 9.8,
-            "severity": "critical",
-            "description": f"Remote Code Execution vulnerability in {keyword_clean} Servlet engine via crafted HTTP payload headers.",
-            "published_date": "2026-02-14",
-            "reference_url": "https://nvd.nist.gov/vuln/detail/CVE-2026-1184"
-        },
-        {
-            "cve_id": "CVE-2025-9831",
-            "cvss_score": 8.2,
-            "severity": "high",
-            "description": f"Memory buffer over-read leak in {keyword_clean} TLS handshake parser exposes internal stack data.",
-            "published_date": "2025-11-09",
-            "reference_url": "https://nvd.nist.gov/vuln/detail/CVE-2025-9831"
-        },
-        {
-            "cve_id": "CVE-2025-4410",
-            "cvss_score": 7.5,
-            "severity": "high",
-            "description": f"Improper access control in {keyword_clean} administrative endpoint allows unauthorized config modification.",
-            "published_date": "2025-08-21",
-            "reference_url": "https://nvd.nist.gov/vuln/detail/CVE-2025-4410"
-        },
-        {
-            "cve_id": "CVE-2025-3109",
-            "cvss_score": 5.3,
-            "severity": "medium",
-            "description": f"Information disclosure vulnerability in {keyword_clean} verbose error response stack trace.",
-            "published_date": "2025-05-12",
-            "reference_url": "https://nvd.nist.gov/vuln/detail/CVE-2025-3109"
-        }
-    ]
-    return curated_database
+            return results
+    except Exception:
+        # Do NOT return fake or sample CVEs if NVD is unreachable or query has no matches
+        return []
 
 def analyze_whois(target_url: str) -> Dict[str, Any]:
-    """Retrieve domain registration information (Registrar, Creation, Expiry, Name Servers, Domain Status)."""
-    parsed = urllib.parse.urlparse(target_url if "://" in target_url else f"http://{target_url}")
-    domain = parsed.netloc or parsed.path
-    domain = domain.split(":")[0].strip()
+    """Retrieve actual domain registration and RDAP information without fake dates."""
+    formatted_url = target_url if "://" in target_url else f"http://{target_url}"
+    parsed = urllib.parse.urlparse(formatted_url)
+    domain = (parsed.netloc or parsed.path).split(":")[0].strip()
+
+    # If domain is an IP address or localhost, RDAP is not applicable
+    is_ip = False
+    try:
+        socket.inet_aton(domain)
+        is_ip = True
+    except OSError:
+        pass
+
+    if is_ip or domain in ("localhost", "127.0.0.1", ""):
+        return {
+            "registrar": "Local / Private IP Target",
+            "creation_date": "Not Available",
+            "expiry_date": "Not Available",
+            "name_servers": [],
+            "domain_status": ["Private/Local"],
+            "raw_text": f"RDAP domain registry lookup is not applicable for IP addresses or local target: {domain}"
+        }
 
     try:
         rdap_url = f"https://rdap.org/domain/{urllib.parse.quote(domain)}"
-        req = urllib.request.Request(rdap_url, headers={'User-Agent': 'CloudVuln-WHOIS-Auditor/1.0', 'Accept': 'application/rdap+json'})
-        with urllib.request.urlopen(req, timeout=3) as resp:
+        req = urllib.request.Request(
+            rdap_url,
+            headers={'User-Agent': 'CloudVuln-WHOIS-Auditor/2.0', 'Accept': 'application/rdap+json'}
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode('utf-8'))
             
-            registrar = "Unknown Registrar"
+            registrar = "Not Available"
             entities = data.get("entities", [])
             for ent in entities:
                 roles = ent.get("roles", [])
@@ -302,172 +295,387 @@ def analyze_whois(target_url: str) -> Dict[str, Any]:
                         if item[0] == "fn":
                             registrar = item[3]
                             break
-            
-            creation_date = "2021-04-15"
-            expiry_date = "2028-04-15"
+
+            creation_date = "Not Available"
+            expiry_date = "Not Available"
             events = data.get("events", [])
             for evt in events:
                 action = evt.get("eventAction")
                 date_str = evt.get("eventDate", "")[:10]
-                if action in ["registration", "created"]:
+                if action in ["registration", "created"] and date_str:
                     creation_date = date_str
-                elif action in ["expiration", "expires"]:
+                elif action in ["expiration", "expires"] and date_str:
                     expiry_date = date_str
 
             name_servers = [ns.get("ldhName", "") for ns in data.get("nameservers", []) if ns.get("ldhName")]
-            if not name_servers:
-                name_servers = [f"ns1.{domain}", f"ns2.{domain}"]
-
-            status_list = data.get("status", ["clientTransferProhibited", "active"])
+            status_list = data.get("status", [])
 
             return {
-                "registrar": registrar or "MarkMonitor Inc. (IANA ID 292)",
+                "registrar": registrar,
                 "creation_date": creation_date,
                 "expiry_date": expiry_date,
                 "name_servers": name_servers,
                 "domain_status": status_list if isinstance(status_list, list) else [str(status_list)],
-                "raw_text": f"RDAP domain record for {domain} fetched."
+                "raw_text": f"RDAP domain record for {domain} retrieved successfully."
             }
     except Exception as e:
         return {
-            "registrar": "MarkMonitor Inc. (IANA ID 292)",
-            "creation_date": "2021-04-15",
-            "expiry_date": "2028-04-15",
-            "name_servers": [
-                f"ns1.{domain if '.' in domain else 'cloudvuln.io'}",
-                f"ns2.{domain if '.' in domain else 'cloudvuln.io'}",
-                "ns3.cloudvuln-dns.org"
-            ],
-            "domain_status": [
-                "clientDeleteProhibited",
-                "clientTransferProhibited",
-                "clientUpdateProhibited",
-                "active"
-            ],
-            "raw_text": f"WHOIS Record for {domain}:\nRegistrar: MarkMonitor Inc.\nStatus: clientTransferProhibited"
+            "registrar": "Not Available",
+            "creation_date": "Not Available",
+            "expiry_date": "Not Available",
+            "name_servers": [],
+            "domain_status": ["Unavailable"],
+            "raw_text": f"RDAP domain registration record unavailable for {domain}: {str(e)}"
         }
+
+def analyze_ports(target_url_or_host: str, port_list: Optional[List[int]] = None) -> Dict[str, Any]:
+    """
+    Perform authorized network port scanning against target.
+    Probes standard common services and returns actual open/closed status.
+    """
+    hostname = target_url_or_host
+    if "://" in hostname:
+        hostname = urllib.parse.urlparse(hostname).netloc
+    hostname = hostname.split(":")[0].strip()
+
+    ip_address = get_target_ip(hostname)
+    if ip_address == "Unavailable":
+        return {
+            "target": hostname,
+            "ip_address": "Resolution Failed",
+            "open_ports_count": 0,
+            "closed_ports_count": 0,
+            "total_scanned": 0,
+            "ports": [],
+            "status": f"Unable to resolve hostname '{hostname}'",
+            "scan_duration": "0s"
+        }
+
+    # Standard common ports to assess
+    standard_ports = port_list or [
+        21, 22, 25, 53, 80, 110, 143, 443, 465, 587, 
+        993, 995, 3000, 3306, 5432, 6379, 8000, 8080, 8443, 27017
+    ]
+
+    service_names = {
+        21: ("FTP", "High"),
+        22: ("SSH", "Low"),
+        25: ("SMTP", "Medium"),
+        53: ("DNS", "Low"),
+        80: ("HTTP", "Low"),
+        110: ("POP3", "Medium"),
+        143: ("IMAP", "Medium"),
+        443: ("HTTPS", "Info"),
+        465: ("SMTPS", "Low"),
+        587: ("Submission", "Low"),
+        993: ("IMAPS", "Low"),
+        995: ("POP3S", "Low"),
+        3000: ("Node/React Dev", "Medium"),
+        3306: ("MySQL Database", "High"),
+        5432: ("PostgreSQL Database", "High"),
+        6379: ("Redis Cache", "Critical"),
+        8000: ("HTTP-Alt", "Medium"),
+        8080: ("HTTP-Proxy / WebApp", "Medium"),
+        8443: ("HTTPS-Alt", "Low"),
+        27017: ("MongoDB Database", "Critical")
+    }
+
+    start_time = time.time()
+    port_results = []
+    open_count = 0
+    closed_count = 0
+
+    for port in standard_ports:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(0.4)
+        try:
+            res = s.connect_ex((ip_address, port))
+            if res == 0:
+                open_count += 1
+                svc, risk = service_names.get(port, ("Unknown Service", "Medium"))
+                port_results.append({
+                    "port": port,
+                    "state": "Open",
+                    "service": svc,
+                    "risk_level": risk
+                })
+            else:
+                closed_count += 1
+        except Exception:
+            closed_count += 1
+        finally:
+            s.close()
+
+    duration_sec = round(time.time() - start_time, 2)
+
+    return {
+        "target": hostname,
+        "ip_address": ip_address,
+        "open_ports_count": open_count,
+        "closed_ports_count": closed_count,
+        "total_scanned": len(standard_ports),
+        "ports": port_results,
+        "status": "Completed",
+        "scan_duration": f"{duration_sec}s"
+    }
 
 def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
     """
-    Perform a defensive OWASP Top 10 (2021) security assessment on an authorized target.
+    Perform a defensive OWASP Top 10:2025 security assessment on target.
     Evaluates HTTP response headers, TLS posture, cookie security flags, server banners,
-    and NVD CVE associations. Unverifiable categories return 'Unable to Verify'.
+    and NVD CVE associations strictly mapped to the official OWASP Top 10:2025 taxonomy.
+    Unverifiable categories return 'Unable to Verify'.
     """
     formatted_url = target_url if "://" in target_url else f"https://{target_url}"
     parsed = urllib.parse.urlparse(formatted_url)
-    domain = parsed.netloc or parsed.path
-    domain = domain.split(":")[0].strip()
+    domain = (parsed.netloc or parsed.path).split(":")[0].strip()
 
     ssl_info = analyze_ssl(target_url)
     headers_info = analyze_headers(target_url)
 
-    resp_headers = {}
-    cookies_headers = []
+    resp_headers: Dict[str, str] = {}
+    cookies_headers: List[str] = []
     server_banner = ""
-    status_code = 200
-    is_https = formatted_url.startswith("https://")
+    target_reachable = False
 
     try:
         req = urllib.request.Request(
             formatted_url,
-            headers={'User-Agent': 'CloudVuln-OWASP-Auditor/1.0'}
+            headers={'User-Agent': 'CloudVuln-OWASP-Auditor/2.0'}
         )
-        with urllib.request.urlopen(req, timeout=3) as resp:
-            status_code = resp.status
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            target_reachable = True
             for k, v in resp.headers.items():
                 resp_headers[k.lower()] = v
                 if k.lower() == 'set-cookie':
                     cookies_headers.append(v)
             server_banner = resp_headers.get("server") or resp_headers.get("x-powered-by") or ""
     except Exception:
-        server_banner = "Apache/2.4.41 (Ubuntu)"
-        resp_headers = {
-            "strict-transport-security": "max-age=31536000",
-            "x-frame-options": "DENY",
-            "x-content-type-options": "nosniff"
-        }
+        # Do NOT forge fake banners or fake headers on exception
+        target_reachable = False
+        server_banner = ""
 
-    cve_records = []
+    # Real CVE query only if a real server technology was detected
+    cve_records: List[Dict[str, Any]] = []
     if server_banner:
         tech_keyword = server_banner.split("/")[0] if "/" in server_banner else server_banner
         if len(tech_keyword) > 2:
             cve_records = query_nvd_cve(tech_keyword)
-    if not cve_records:
-        cve_records = query_nvd_cve("OpenSSL")
 
     findings = []
+    is_https = formatted_url.startswith("https://")
 
-    # A01: Broken Access Control
-    cors_origin = resp_headers.get("access-control-allow-origin")
-    if cors_origin == "*":
+    # A01:2025 – Broken Access Control
+    if not target_reachable:
         findings.append({
             "owasp_id": "A01:2025",
             "category": "Broken Access Control",
-            "title": "Wildcard CORS Access Control Policy Detected",
-            "status": "Failed",
-            "severity": "High",
-            "description": "The Access-Control-Allow-Origin header is set to '*', permitting untrusted external domains to read resource responses.",
-            "evidence": f"Access-Control-Allow-Origin: {cors_origin}",
-            "affected_component": "HTTP Response Headers / CORS Policy",
-            "impact": "Cross-origin resource reading vulnerability allowing external malicious sites to query authenticated endpoints.",
-            "recommendation": "Restrict CORS policy to explicitly trusted origin domains instead of wildcard '*'.",
-            "cvss_score": 7.5,
+            "title": "Access Control Verification Inconclusive",
+            "status": "Unable to Verify",
+            "severity": "Unable to Verify",
+            "description": "Target endpoint could not be reached over HTTP/HTTPS to evaluate public access control boundaries.",
+            "evidence": f"Connection to {formatted_url} timed out or was refused.",
+            "affected_component": "Network Transport Boundary",
+            "impact": "Boundary access control directives could not be inspected passively.",
+            "recommendation": "Ensure target host is reachable and accepts HTTP/HTTPS traffic.",
+            "cvss_score": None,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+            "reference": "https://owasp.org/Top10/A01_2025-Broken_Access_Control/"
         })
-    elif not is_https:
+    else:
+        cors_origin = resp_headers.get("access-control-allow-origin")
+        if cors_origin == "*":
+            findings.append({
+                "owasp_id": "A01:2025",
+                "category": "Broken Access Control",
+                "title": "Wildcard CORS Access Control Policy Detected",
+                "status": "Failed",
+                "severity": "High",
+                "description": "The Access-Control-Allow-Origin header is set to wildcard '*', permitting untrusted external web origins to read response payloads.",
+                "evidence": f"Access-Control-Allow-Origin: {cors_origin}",
+                "affected_component": "HTTP Response Headers / CORS Policy",
+                "impact": "Enables cross-origin data exposure if authenticated data is served without strict origin checks.",
+                "recommendation": "Restrict CORS policy to explicitly trusted origin domains instead of wildcard '*'.",
+                "cvss_score": 7.5,
+                "related_cve": None,
+                "reference": "https://owasp.org/Top10/A01_2025-Broken_Access_Control/"
+            })
+        elif not is_https:
+            findings.append({
+                "owasp_id": "A01:2025",
+                "category": "Broken Access Control",
+                "title": "Unencrypted HTTP Transport Endpoint",
+                "status": "Failed",
+                "severity": "High",
+                "description": "Target endpoint operates over unencrypted HTTP protocol without enforced TLS transport encryption.",
+                "evidence": f"URL Scheme: {parsed.scheme}",
+                "affected_component": "Transport Layer",
+                "impact": "Transmitted session identifiers, tokens, and data are exposed to interception on public networks.",
+                "recommendation": "Enforce HTTP-to-HTTPS redirection and mandate TLS 1.2+ across all routes.",
+                "cvss_score": 7.5,
+                "related_cve": None,
+                "reference": "https://owasp.org/Top10/A01_2025-Broken_Access_Control/"
+            })
+        else:
+            findings.append({
+                "owasp_id": "A01:2025",
+                "category": "Broken Access Control",
+                "title": "Access Control Transport Policy Compliant",
+                "status": "Passed",
+                "severity": "Passed",
+                "description": "Transport channel mandates TLS encryption and no permissive wildcard CORS policies were identified on public headers.",
+                "evidence": f"Target HTTPS URL: {formatted_url}, CORS: {cors_origin or 'Not Set / Restricted'}",
+                "affected_component": "HTTP Response Headers",
+                "impact": "None observed on public transport headers.",
+                "recommendation": "Maintain granular role-based access control (RBAC) on internal application routes.",
+                "cvss_score": 0.0,
+                "related_cve": None,
+                "reference": "https://owasp.org/Top10/A01_2025-Broken_Access_Control/"
+            })
+
+    # A02:2025 – Security Misconfiguration
+    if not target_reachable:
         findings.append({
-            "owasp_id": "A01:2025",
-            "category": "Broken Access Control",
-            "title": "Unencrypted HTTP Transport Endpoint",
-            "status": "Failed",
-            "severity": "High",
-            "description": "Target endpoint operates over unencrypted HTTP protocol without enforced TLS encryption.",
-            "evidence": f"URL Scheme: {parsed.scheme}",
-            "affected_component": "Transport Layer",
-            "impact": "Session tokens, credentials, and API responses are transmitted in cleartext susceptible to MITM interception.",
-            "recommendation": "Enforce HTTP-to-HTTPS redirect and mandate TLS transport across all routes.",
-            "cvss_score": 7.5,
+            "owasp_id": "A02:2025",
+            "category": "Security Misconfiguration",
+            "title": "Security Configuration Audit Inconclusive",
+            "status": "Unable to Verify",
+            "severity": "Unable to Verify",
+            "description": "Target did not respond to passive HTTP probe; security headers could not be verified.",
+            "evidence": "Probe timed out or connection was refused.",
+            "affected_component": "Web Server Hardening",
+            "impact": "Cannot assess presence of essential hardening headers.",
+            "recommendation": "Verify web server availability and probe response.",
+            "cvss_score": None,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+            "reference": "https://owasp.org/Top10/A02_2025-Security_Misconfiguration/"
+        })
+    else:
+        missing_sec_headers = []
+        for h in ["x-frame-options", "x-content-type-options", "referrer-policy", "permissions-policy"]:
+            if h not in resp_headers:
+                missing_sec_headers.append(h)
+
+        if server_banner or missing_sec_headers:
+            findings.append({
+                "owasp_id": "A02:2025",
+                "category": "Security Misconfiguration",
+                "title": "Security Headers Missing or Version Banner Disclosed",
+                "status": "Failed" if len(missing_sec_headers) >= 2 else "Warning",
+                "severity": "Medium",
+                "description": "Web server discloses software version metadata or omits standard security hardening response headers.",
+                "evidence": f"Server Banner: '{server_banner or 'None'}', Missing Headers: {', '.join(missing_sec_headers) if missing_sec_headers else 'None'}",
+                "affected_component": "HTTP Response Headers / Web Server Configuration",
+                "impact": "Discloses technology stack and increases vulnerability to clickjacking or MIME confusion attacks.",
+                "recommendation": "Suppress Server and X-Powered-By banners; configure X-Frame-Options, X-Content-Type-Options, and Referrer-Policy headers.",
+                "cvss_score": 5.3,
+                "related_cve": None,
+                "reference": "https://owasp.org/Top10/A02_2025-Security_Misconfiguration/"
+            })
+        else:
+            findings.append({
+                "owasp_id": "A02:2025",
+                "category": "Security Misconfiguration",
+                "title": "Security Headers Configured & Server Banner Suppressed",
+                "status": "Passed",
+                "severity": "Passed",
+                "description": "Standard security response headers are configured and no sensitive software version banners were disclosed.",
+                "evidence": "X-Frame-Options and X-Content-Type-Options detected; Server banner suppressed.",
+                "affected_component": "Web Server Config",
+                "impact": "Information disclosure minimized.",
+                "recommendation": "Maintain hardening policies across deployments.",
+                "cvss_score": 0.0,
+                "related_cve": None,
+                "reference": "https://owasp.org/Top10/A02_2025-Security_Misconfiguration/"
+            })
+
+    # A03:2025 – Software Supply Chain Failures
+    top_cve = cve_records[0] if cve_records else None
+    if top_cve and top_cve.get("cvss_score", 0) >= 7.0:
+        findings.append({
+            "owasp_id": "A03:2025",
+            "category": "Software Supply Chain Failures",
+            "title": f"Known CVEs Identified in Software Component ({top_cve.get('cve_id')})",
+            "status": "Failed",
+            "severity": top_cve.get("severity", "High").capitalize(),
+            "description": "Identified component version matches public high-severity CVE records in the National Vulnerability Database (NVD).",
+            "evidence": f"Component: {server_banner}, Identified CVE: {top_cve.get('cve_id')} (CVSS {top_cve.get('cvss_score')})",
+            "affected_component": f"Exposed Component ({top_cve.get('cve_id')})",
+            "impact": "Exposed vulnerable third-party components enable remote exploitation.",
+            "recommendation": f"Upgrade affected package to a patched version resolving {top_cve.get('cve_id')}.",
+            "cvss_score": top_cve.get("cvss_score"),
+            "related_cve": top_cve.get("cve_id"),
+            "reference": top_cve.get("reference_url") or "https://owasp.org/Top10/A03_2025-Software_Supply_Chain_Failures/"
+        })
+    elif server_banner:
+        findings.append({
+            "owasp_id": "A03:2025",
+            "category": "Software Supply Chain Failures",
+            "title": "No Critical Outdated Component CVEs Identified",
+            "status": "Passed",
+            "severity": "Passed",
+            "description": f"Live NVD lookup for detected software stack '{server_banner}' returned no active critical CVE matches.",
+            "evidence": f"Audited software stack: {server_banner}",
+            "affected_component": "Server Software Components",
+            "impact": "Component stack appears up to date against current NVD baseline.",
+            "recommendation": "Integrate automated Dependency-Check and SBOM tracking in CI/CD pipeline.",
+            "cvss_score": 0.0,
+            "related_cve": None,
+            "reference": "https://owasp.org/Top10/A03_2025-Software_Supply_Chain_Failures/"
         })
     else:
         findings.append({
-            "owasp_id": "A01:2025",
-            "category": "Broken Access Control",
-            "title": "Access Control Transport Policy Compliant",
-            "status": "Passed",
-            "severity": "Passed",
-            "description": "Transport channel requires TLS encryption and no wildcard CORS policy was identified on public headers.",
-            "evidence": f"Target HTTPS URL: {formatted_url}, CORS: {cors_origin or 'Not Set / Restricted'}",
-            "affected_component": "HTTP Response Headers",
-            "impact": "None observed on public boundary headers.",
-            "recommendation": "Continue enforcing granular role-based access control (RBAC) on internal server routes.",
-            "cvss_score": 0.0,
+            "owasp_id": "A03:2025",
+            "category": "Software Supply Chain Failures",
+            "title": "Software Supply Chain Dependencies Unverified",
+            "status": "Unable to Verify",
+            "severity": "Unable to Verify",
+            "description": "Server banners and application dependencies are suppressed or unidentifiable from external boundary inspection.",
+            "evidence": "No software version banners or package manifests exposed externally.",
+            "affected_component": "Application Dependencies",
+            "impact": "Internal software dependencies require static analysis (SAST) or Software Bill of Materials (SBOM) review.",
+            "recommendation": "Scan application build dependencies with automated SBOM tools.",
+            "cvss_score": None,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A01_2021-Broken_Access_Control/"
+            "reference": "https://owasp.org/Top10/A03_2025-Software_Supply_Chain_Failures/"
         })
 
-    # A02: Cryptographic Failures
+    # A04:2025 – Cryptographic Failures
     has_hsts = "strict-transport-security" in resp_headers
-    tls_ver = ssl_info.get("tls_version", "TLSv1.3")
-    is_cert_valid = ssl_info.get("is_valid", True)
+    tls_ver = ssl_info.get("tls_version", "Not Available")
+    is_cert_valid = ssl_info.get("is_valid", False)
 
-    if not is_cert_valid or tls_ver in ["TLSv1", "TLSv1.1"] or not has_hsts:
+    if not is_https:
+        findings.append({
+            "owasp_id": "A04:2025",
+            "category": "Cryptographic Failures",
+            "title": "Missing Transport Layer Encryption (Cleartext HTTP)",
+            "status": "Failed",
+            "severity": "High",
+            "description": "Target operates over unencrypted HTTP, failing basic transport cryptographic requirements.",
+            "evidence": f"Target scheme: {parsed.scheme}",
+            "affected_component": "Transport Layer",
+            "impact": "All transmitted data is unencrypted and vulnerable to eavesdropping and manipulation.",
+            "recommendation": "Install an SSL/TLS certificate and mandate HTTPS across all endpoints.",
+            "cvss_score": 7.5,
+            "related_cve": None,
+            "reference": "https://owasp.org/Top10/A04_2025-Cryptographic_Failures/"
+        })
+    elif not is_cert_valid or tls_ver in ["TLSv1", "TLSv1.1"] or not has_hsts:
         findings.append({
             "owasp_id": "A04:2025",
             "category": "Cryptographic Failures",
             "title": "Cryptographic Protection Deficiencies Identified",
-            "status": "Failed",
+            "status": "Failed" if not is_cert_valid else "Warning",
             "severity": "High" if not is_cert_valid else "Medium",
             "description": "Assessment detected weak or missing cryptographic controls on the target transport channel.",
             "evidence": f"TLS Version: {tls_ver}, Cert Status: {ssl_info.get('cert_status')}, HSTS Header: {'Present' if has_hsts else 'Missing'}",
             "affected_component": "SSL/TLS Configuration & Headers",
-            "impact": "Exposes traffic to SSL stripping, protocol downgrade attacks, and man-in-the-middle data theft.",
-            "recommendation": "Configure Strict-Transport-Security (HSTS max-age=31536000) and disable legacy TLS 1.0/1.1 protocols.",
+            "impact": "Exposes traffic to SSL stripping, protocol downgrade attacks, and interception.",
+            "recommendation": "Configure Strict-Transport-Security (HSTS max-age=31536000) and ensure valid TLS 1.2+ certificate.",
             "cvss_score": 6.5,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+            "reference": "https://owasp.org/Top10/A04_2025-Cryptographic_Failures/"
         })
     else:
         findings.append({
@@ -476,33 +684,49 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
             "title": "Strong TLS Cryptographic Configuration Verified",
             "status": "Passed",
             "severity": "Passed",
-            "description": "Target employs valid TLS certificate with modern protocol version and HSTS directive.",
+            "description": "Target employs a valid TLS certificate with modern protocol version and HSTS directive.",
             "evidence": f"Protocol: {tls_ver}, Issuer: {ssl_info.get('issuer')}, HSTS: {resp_headers.get('strict-transport-security')}",
             "affected_component": "SSL/TLS Transport Engine",
             "impact": "Encrypted communication channels protect confidentiality and integrity.",
-            "recommendation": "Maintain automated certificate renewal and monitor cipher suite hygiene.",
+            "recommendation": "Maintain automated certificate renewal and monitor cipher hygiene.",
             "cvss_score": 0.0,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A02_2021-Cryptographic_Failures/"
+            "reference": "https://owasp.org/Top10/A04_2025-Cryptographic_Failures/"
         })
 
-    # A03: Injection
+    # A05:2025 – Injection
     has_csp = "content-security-policy" in resp_headers
-    if not has_csp:
+    if not target_reachable:
+        findings.append({
+            "owasp_id": "A05:2025",
+            "category": "Injection",
+            "title": "Injection Defenses Inconclusive",
+            "status": "Unable to Verify",
+            "severity": "Unable to Verify",
+            "description": "Target response could not be retrieved to verify injection defenses.",
+            "evidence": "Target unreachable during probe.",
+            "affected_component": "HTTP Response Headers",
+            "impact": "Injection mitigation posture cannot be validated passively.",
+            "recommendation": "Deploy a strict Content-Security-Policy header restricting script-src and object-src.",
+            "cvss_score": None,
+            "related_cve": None,
+            "reference": "https://owasp.org/Top10/A05_2025-Injection/"
+        })
+    elif not has_csp:
         findings.append({
             "owasp_id": "A05:2025",
             "category": "Injection",
             "title": "Missing Content Security Policy (Cross-Site Scripting Injection Risk)",
             "status": "Warning",
             "severity": "High",
-            "description": "Content-Security-Policy (CSP) header is not configured on target HTTP response headers.",
+            "description": "Content-Security-Policy (CSP) header is absent from HTTP response headers.",
             "evidence": "Header 'Content-Security-Policy' is absent from server response.",
-            "affected_component": "HTTP Response Headers / Web Browser Sandbox",
-            "impact": "Vulnerable to Cross-Site Scripting (XSS) and malicious inline script execution injection.",
+            "affected_component": "HTTP Response Headers / Browser Sandbox",
+            "impact": "Client browser has no script execution restrictions, increasing risk of Cross-Site Scripting (XSS).",
             "recommendation": "Deploy a strict Content-Security-Policy header restricting script-src, object-src, and base-uri.",
             "cvss_score": 7.2,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A03_2021-Injection/"
+            "reference": "https://owasp.org/Top10/A05_2025-Injection/"
         })
     else:
         findings.append({
@@ -511,163 +735,122 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
             "title": "Content Security Policy Header Configured",
             "status": "Passed",
             "severity": "Passed",
-            "description": "Server supplies a Content-Security-Policy header to mitigate script injection.",
+            "description": "Server supplies a Content-Security-Policy header to restrict untrusted script execution.",
             "evidence": f"CSP Value: {(resp_headers.get('content-security-policy') or '')[:80]}...",
             "affected_component": "HTTP Response Headers",
-            "impact": "Helps restrict untrusted script execution in client browsers.",
-            "recommendation": "Periodically review CSP directives to prevent overly permissive unsafe-inline flags.",
+            "impact": "Restricts untrusted script injection execution in client browsers.",
+            "recommendation": "Periodically audit CSP directives to avoid unsafe-inline or wildcard origins.",
             "cvss_score": 0.0,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A03_2021-Injection/"
+            "reference": "https://owasp.org/Top10/A05_2025-Injection/"
         })
 
-    # A04: Insecure Design
+    # A06:2025 – Insecure Design
     findings.append({
         "owasp_id": "A06:2025",
         "category": "Insecure Design",
-        "title": "Architecture & Business Logic Design Inspection",
+        "title": "Architecture & Threat Model Design Verification",
         "status": "Unable to Verify",
         "severity": "Unable to Verify",
-        "description": "Architectural design flaws, threat modeling gaps, and business logic flaws require threat model review and authenticated source audit.",
-        "evidence": "Black-box non-destructive inspection cannot reliably verify internal application workflow logic without threat model specs.",
-        "affected_component": "Application Architecture / Workflow Logic",
-        "impact": "Potential design-level flaws (e.g. rate limit bypass, workflow skipping) cannot be identified passively.",
-        "recommendation": "Perform formal threat modeling, secure design reviews, and authenticated logic testing.",
+        "description": "Architectural design flaws, threat modeling gaps, and business logic flaws require threat modeling reviews and authenticated source audits.",
+        "evidence": "Passive network inspection cannot reliably evaluate internal application business workflows.",
+        "affected_component": "Application Architecture / Business Logic",
+        "impact": "Design-level vulnerabilities cannot be identified through passive boundary checks alone.",
+        "recommendation": "Perform formal threat modeling, secure design reviews, and authenticated logic audits.",
         "cvss_score": None,
         "related_cve": None,
-        "reference": "https://owasp.org/Top10/A04_2021-Insecure_Design/"
+        "reference": "https://owasp.org/Top10/A06_2025-Insecure_Design/"
     })
 
-    # A05: Security Misconfiguration
-    missing_sec_headers = []
-    for h in ["x-frame-options", "x-content-type-options", "referrer-policy", "permissions-policy"]:
-        if h not in resp_headers:
-            missing_sec_headers.append(h)
-
-    if server_banner or missing_sec_headers:
-        findings.append({
-            "owasp_id": "A02:2025",
-            "category": "Security Misconfiguration",
-            "title": "Security Headers Missing & Technology Banner Disclosure",
-            "status": "Failed" if len(missing_sec_headers) >= 2 else "Warning",
-            "severity": "Medium",
-            "description": "Server reveals software version metadata or omits standard security hardening response headers.",
-            "evidence": f"Server Banner: '{server_banner or 'None'}', Missing Headers: {', '.join(missing_sec_headers)}",
-            "affected_component": "HTTP Response Headers / Web Server Configuration",
-            "impact": "Facilitates targeted reconnaissance and exposes site to clickjacking or MIME-sniffing exploits.",
-            "recommendation": "Strip 'Server' and 'X-Powered-By' headers. Add X-Frame-Options, X-Content-Type-Options, and Referrer-Policy headers.",
-            "cvss_score": 5.3,
-            "related_cve": None,
-            "reference": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
-        })
-    else:
-        findings.append({
-            "owasp_id": "A02:2025",
-            "category": "Security Misconfiguration",
-            "title": "Security Headers & Server Banner Hardened",
-            "status": "Passed",
-            "severity": "Passed",
-            "description": "No technology version banners disclosed and security response headers are configured.",
-            "evidence": "X-Frame-Options, X-Content-Type-Options present; Server banner suppressed.",
-            "affected_component": "Web Server Config",
-            "impact": "Minimizes information leakage and mitigates browser frame embedding.",
-            "recommendation": "Maintain hardening policies during software deployment updates.",
-            "cvss_score": 0.0,
-            "related_cve": None,
-            "reference": "https://owasp.org/Top10/A05_2021-Security_Misconfiguration/"
-        })
-
-    # A06: Vulnerable and Outdated Components
-    top_cve = cve_records[0] if cve_records else None
-    if top_cve and top_cve.get("cvss_score", 0) >= 7.0:
-        findings.append({
-            "owasp_id": "A03:2025",
-            "category": "Software Supply Chain Failures",
-            "title": f"Known Vulnerabilities Identified in Exposed Software ({top_cve.get('cve_id')})",
-            "status": "Failed",
-            "severity": top_cve.get("severity", "High").capitalize(),
-            "description": "Target environment matches public CVE records in National Vulnerability Database (NVD) for identified component stack.",
-            "evidence": f"Component: {server_banner or 'Web Stack'}, Identified CVE: {top_cve.get('cve_id')} (CVSS {top_cve.get('cvss_score')})",
-            "affected_component": f"Software Component ({top_cve.get('cve_id')})",
-            "impact": "Exposed software components with unpatched CVEs allow remote attackers to compromise service integrity.",
-            "recommendation": f"Upgrade component stack to latest stable release. Apply vendor patch for {top_cve.get('cve_id')}.",
-            "cvss_score": top_cve.get("cvss_score"),
-            "related_cve": top_cve.get("cve_id"),
-            "reference": top_cve.get("reference_url") or "https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"
-        })
-    else:
-        findings.append({
-            "owasp_id": "A03:2025",
-            "category": "Software Supply Chain Failures",
-            "title": "No Critical Outdated Component Vulnerabilities Identified",
-            "status": "Passed",
-            "severity": "Passed",
-            "description": "Public NVD lookup for identified software stack returned no active high-severity CVE matches.",
-            "evidence": f"Audited software stack: {server_banner or 'Generic Web Server'}",
-            "affected_component": "Server Software Components",
-            "impact": "Component stack appears up to date against current NVD baseline.",
-            "recommendation": "Integrate automated Dependency-Check and Software Bill of Materials (SBOM) tracking.",
-            "cvss_score": 0.0,
-            "related_cve": None,
-            "reference": "https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/"
-        })
-
-    # A07: Identification and Authentication Failures
-    insecure_cookies = []
-    for c in cookies_headers:
-        c_lower = c.lower()
-        if "secure" not in c_lower or "httponly" not in c_lower:
-            insecure_cookies.append(c)
-
-    if insecure_cookies:
+    # A07:2025 – Authentication Failures
+    if not target_reachable:
         findings.append({
             "owasp_id": "A07:2025",
             "category": "Authentication Failures",
-            "title": "Session Cookies Missing Security Directives (Secure / HttpOnly)",
-            "status": "Failed",
-            "severity": "Medium",
-            "description": "HTTP response Set-Cookie header lacks essential 'Secure' or 'HttpOnly' flags.",
-            "evidence": f"Set-Cookie Header: {insecure_cookies[0][:60]}...",
-            "affected_component": "HTTP Session Management / Cookies",
-            "impact": "Session tokens can be stolen via XSS (missing HttpOnly) or intercepted over unencrypted channels (missing Secure).",
-            "recommendation": "Append 'Secure; HttpOnly; SameSite=Lax' flags to all session authorization cookies.",
-            "cvss_score": 6.1,
+            "title": "Authentication Session Controls Inconclusive",
+            "status": "Unable to Verify",
+            "severity": "Unable to Verify",
+            "description": "Target unreachable; session cookie security directives could not be retrieved.",
+            "evidence": "No response received from target.",
+            "affected_component": "Session Management",
+            "impact": "Cannot assess session cookie flags.",
+            "recommendation": "Ensure session cookies enforce Secure, HttpOnly, and SameSite directives.",
+            "cvss_score": None,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
+            "reference": "https://owasp.org/Top10/A07_2025-Authentication_Failures/"
         })
     else:
-        findings.append({
-            "owasp_id": "A07:2025",
-            "category": "Authentication Failures",
-            "title": "Authentication Session Transport Controls Verified",
-            "status": "Passed",
-            "severity": "Passed",
-            "description": "No insecure session cookies without Secure/HttpOnly flags were detected on public HTTP headers.",
-            "evidence": "Public HTTP response headers checked for unflagged Set-Cookie instructions.",
-            "affected_component": "Session Token Transport",
-            "impact": "Protects session cookies from client script access and cleartext exposure.",
-            "recommendation": "Enforce multi-factor authentication (MFA) and robust password policy on auth endpoints.",
-            "cvss_score": 0.0,
-            "related_cve": None,
-            "reference": "https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/"
-        })
+        insecure_cookies = []
+        for c in cookies_headers:
+            c_lower = c.lower()
+            if "secure" not in c_lower or "httponly" not in c_lower:
+                insecure_cookies.append(c)
 
-    # A08: Software and Data Integrity Failures
-    if not has_csp:
+        if insecure_cookies:
+            findings.append({
+                "owasp_id": "A07:2025",
+                "category": "Authentication Failures",
+                "title": "Session Cookies Missing Security Directives (Secure / HttpOnly)",
+                "status": "Failed",
+                "severity": "Medium",
+                "description": "HTTP response Set-Cookie header lacks essential 'Secure' or 'HttpOnly' flags.",
+                "evidence": f"Set-Cookie Header: {insecure_cookies[0][:60]}...",
+                "affected_component": "HTTP Session Management / Cookies",
+                "impact": "Session cookies can be stolen via XSS (missing HttpOnly) or intercepted over unencrypted channels (missing Secure).",
+                "recommendation": "Append 'Secure; HttpOnly; SameSite=Lax' directives to all session authorization cookies.",
+                "cvss_score": 6.1,
+                "related_cve": None,
+                "reference": "https://owasp.org/Top10/A07_2025-Authentication_Failures/"
+            })
+        else:
+            findings.append({
+                "owasp_id": "A07:2025",
+                "category": "Authentication Failures",
+                "title": "Authentication Session Transport Controls Verified",
+                "status": "Passed",
+                "severity": "Passed",
+                "description": "No insecure session cookies without Secure/HttpOnly flags were detected on public HTTP headers.",
+                "evidence": "Public HTTP response headers checked for unflagged Set-Cookie directives.",
+                "affected_component": "Session Token Transport",
+                "impact": "Protects session cookies from client script access and cleartext interception.",
+                "recommendation": "Enforce multi-factor authentication (MFA) and strong password rules on authentication endpoints.",
+                "cvss_score": 0.0,
+                "related_cve": None,
+                "reference": "https://owasp.org/Top10/A07_2025-Authentication_Failures/"
+            })
+
+    # A08:2025 – Software or Data Integrity Failures
+    if not target_reachable:
         findings.append({
             "owasp_id": "A08:2025",
             "category": "Software or Data Integrity Failures",
-            "title": "Unverified Third-Party Code Integration Posture",
+            "title": "Integrity Directives Inconclusive",
+            "status": "Unable to Verify",
+            "severity": "Unable to Verify",
+            "description": "Target did not respond; asset integrity directives could not be inspected.",
+            "evidence": "Target unreachable during inspection.",
+            "affected_component": "Client-Side Asset Delivery",
+            "impact": "Cannot assess asset integrity controls.",
+            "recommendation": "Implement Subresource Integrity (SRI) on external scripts and link tags.",
+            "cvss_score": None,
+            "related_cve": None,
+            "reference": "https://owasp.org/Top10/A08_2025-Software_or_Data_Integrity_Failures/"
+        })
+    elif not has_csp:
+        findings.append({
+            "owasp_id": "A08:2025",
+            "category": "Software or Data Integrity Failures",
+            "title": "Unverified Third-Party Asset Integrity Posture",
             "status": "Warning",
             "severity": "Low",
-            "description": "Lack of Content-Security-Policy or Subresource Integrity (SRI) posture allows untrusted remote code loading.",
+            "description": "Lack of Content-Security-Policy or Subresource Integrity (SRI) posture allows untrusted remote asset execution.",
             "evidence": "CSP script-src policy missing on target HTTP response.",
             "affected_component": "Client-Side Asset Delivery",
-            "impact": "Risk of compromised CDN libraries injecting malicious payloads into client web sessions.",
-            "recommendation": "Implement Subresource Integrity (SRI) hashes on external script tags and restrict CSP script-src sources.",
+            "impact": "Risk of compromised third-party CDN libraries injecting malicious payloads.",
+            "recommendation": "Implement Subresource Integrity (SRI) hashes on external scripts and restrict CSP script sources.",
             "cvss_score": 3.7,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+            "reference": "https://owasp.org/Top10/A08_2025-Software_or_Data_Integrity_Failures/"
         })
     else:
         findings.append({
@@ -680,44 +863,44 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
             "evidence": f"CSP directive present on {domain}",
             "affected_component": "Asset Loading Policy",
             "impact": "Reduces unauthorized script manipulation risks.",
-            "recommendation": "Sign build artifacts and verify integrity hashes across CI/CD distribution nodes.",
+            "recommendation": "Sign build artifacts and verify integrity hashes across CI/CD distribution pipelines.",
             "cvss_score": 0.0,
             "related_cve": None,
-            "reference": "https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/"
+            "reference": "https://owasp.org/Top10/A08_2025-Software_or_Data_Integrity_Failures/"
         })
 
-    # A09: Security Logging and Monitoring Failures
+    # A09:2025 – Security Logging & Alerting Failures
     findings.append({
         "owasp_id": "A09:2025",
         "category": "Security Logging & Alerting Failures",
         "title": "Centralized Security Logging & Auditing Baseline",
         "status": "Unable to Verify",
         "severity": "Unable to Verify",
-        "description": "Internal security logging, SIEM ingestion, log retention, and real-time alert thresholds cannot be evaluated via black-box network checks.",
+        "description": "Internal security logging, SIEM ingestion, log retention, and real-time alert thresholds cannot be evaluated via passive boundary checks.",
         "evidence": "Internal log management pipeline requires internal SecOps infrastructure audit.",
         "affected_component": "Logging & Monitoring / SIEM Pipeline",
-        "impact": "Delayed breach detection and insufficient incident forensic audit trails if logging is inactive.",
-        "recommendation": "Ensure all API requests, authentication attempts, and privilege changes stream to an immutable SIEM platform.",
+        "impact": "Delayed breach detection and insufficient audit trails if logging is inactive.",
+        "recommendation": "Ensure all API requests, authentication attempts, and privilege escalations stream to an immutable SIEM platform.",
         "cvss_score": None,
         "related_cve": None,
-        "reference": "https://owasp.org/Top10/A09_2021-Security_Logging_and_Monitoring_Failures/"
+        "reference": "https://owasp.org/Top10/A09_2025-Security_Logging_and_Alerting_Failures/"
     })
 
-    # A10: Server-Side Request Forgery (SSRF)
+    # A10:2025 – Mishandling of Exceptional Conditions
     findings.append({
-        "owasp_id": "A01:2025",
+        "owasp_id": "A10:2025",
         "category": "Mishandling of Exceptional Conditions",
-        "title": "Server-Side Request Forgery Endpoint Inspection",
+        "title": "Exception Handling & Error Disclosure Inspection",
         "status": "Unable to Verify",
         "severity": "Unable to Verify",
-        "description": "Verifying internal network fetch primitives (SSRF) safely requires authenticated API spec review or out-of-band callback listener.",
-        "evidence": "Out-of-band HTTP listener callback verification not executed during passive assessment.",
-        "affected_component": "Backend Network Fetch Services / URL Handlers",
-        "impact": "Unprotected URL fetch parameters could allow attackers to pivot into internal cloud metadata endpoints (e.g. 169.254.169.254).",
-        "recommendation": "Implement strict URL destination allowlists and restrict egress network traffic from application containers.",
+        "description": "Verifying internal exception handling, stack trace suppression, and error handling resilience requires authenticated test payloads.",
+        "evidence": "Non-destructive passive scan does not submit malformed payloads to trigger exception conditions.",
+        "affected_component": "Backend Exception Handling / Error Handlers",
+        "impact": "Unhandled exceptions could leak internal server stack traces or cause denial of service.",
+        "recommendation": "Implement centralized exception handlers and ensure generic error pages are returned to clients.",
         "cvss_score": None,
         "related_cve": None,
-        "reference": "https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/"
+        "reference": "https://owasp.org/Top10/A10_2025-Mishandling_of_Exceptional_Conditions/"
     })
 
     passed_count = sum(1 for f in findings if f["status"] == "Passed")
@@ -755,9 +938,23 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
         "findings": findings
     }
 
-
-def calculate_security_score(ssl_summary: Dict[str, Any], headers_summary: Dict[str, Any], cve_findings: List[Dict[str, Any]], whois_summary: Dict[str, Any]) -> Dict[str, Any]:
-    """Calculate an overall security score from 0-100 based on headers, SSL, CVSS, and cert status."""
+def calculate_security_score(
+    ssl_summary: Dict[str, Any],
+    headers_summary: Dict[str, Any],
+    cve_findings: List[Dict[str, Any]],
+    whois_summary: Dict[str, Any],
+    ports_summary: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Calculate an overall deterministic security score from 0-100 based on actual findings.
+    Scoring Formula:
+      Base Score: 100
+      - Headers Penalty: up to 35 pts (CSP: -12, HSTS: -10, X-Frame: -8, X-Content-Type: -5, Referrer: -4, Permissions: -3)
+      - SSL/TLS Penalty: up to 35 pts (Invalid/Expired: -35, Expiring <14d: -15, Expiring <30d: -5, Deprecated TLS: -15)
+      - CVSS CVE Penalty: up to 35 pts (Critical CVSS>=9.0: -15 ea, High CVSS>=7.0: -10 ea, Med CVSS>=4.0: -5 ea)
+      - Open High-Risk Ports: up to 20 pts (Redis/MongoDB: -10 ea, MySQL/Postgres exposed: -5 ea)
+    Deterministic: identical inputs guarantee identical outputs.
+    """
     base_score = 100
     
     header_weights = {
@@ -779,7 +976,7 @@ def calculate_security_score(ssl_summary: Dict[str, Any], headers_summary: Dict[
 
     ssl_penalty = 0
     ssl_issues = []
-    if not ssl_summary.get("is_valid", True):
+    if not ssl_summary.get("is_valid", False):
         ssl_penalty += 35
         ssl_issues.append("SSL/TLS Certificate is EXPIRED or INVALID.")
     else:
@@ -791,7 +988,7 @@ def calculate_security_score(ssl_summary: Dict[str, Any], headers_summary: Dict[
             ssl_penalty += 5
             ssl_issues.append(f"Certificate expires in {days_left} days.")
 
-    tls_ver = ssl_summary.get("tls_version", "TLSv1.3")
+    tls_ver = ssl_summary.get("tls_version", "Unknown")
     if tls_ver in ["TLSv1", "TLSv1.1"]:
         ssl_penalty += 15
         ssl_issues.append(f"Deprecated protocol version ({tls_ver}) enabled.")
@@ -805,24 +1002,35 @@ def calculate_security_score(ssl_summary: Dict[str, Any], headers_summary: Dict[
     low_cves = 0
 
     for cve in cve_findings:
-        cvss = cve.get("cvss_score", 5.0)
-        sev = cve.get("severity", "").lower()
+        cvss = float(cve.get("cvss_score", 5.0))
+        sev = str(cve.get("severity", "")).lower()
         if cvss >= 9.0 or sev == "critical":
             critical_cves += 1
-            cvss_penalty += 10
+            cvss_penalty += 15
         elif cvss >= 7.0 or sev == "high":
             high_cves += 1
-            cvss_penalty += 6
+            cvss_penalty += 10
         elif cvss >= 4.0 or sev == "medium":
             medium_cves += 1
-            cvss_penalty += 3
+            cvss_penalty += 5
         else:
             low_cves += 1
-            cvss_penalty += 1
+            cvss_penalty += 2
 
     cvss_penalty = min(35, cvss_penalty)
 
-    overall_score = max(0, min(100, base_score - header_penalty - ssl_penalty - cvss_penalty))
+    # Ports penalty
+    ports_penalty = 0
+    if ports_summary:
+        for p in ports_summary.get("ports", []):
+            risk = p.get("risk_level", "").lower()
+            if risk == "critical":
+                ports_penalty += 10
+            elif risk == "high":
+                ports_penalty += 5
+    ports_penalty = min(20, ports_penalty)
+
+    overall_score = max(0, min(100, base_score - header_penalty - ssl_penalty - cvss_penalty - ports_penalty))
 
     if overall_score >= 85:
         risk_level = "Low"
@@ -847,9 +1055,10 @@ def calculate_security_score(ssl_summary: Dict[str, Any], headers_summary: Dict[
         exec_summary += f"Missing HTTP headers: {', '.join(missing_headers[:3])}. "
     if ssl_issues:
         exec_summary += f"SSL/TLS posture: {' '.join(ssl_issues)} "
-    else:
-        exec_summary += f"SSL/TLS certificate status: Valid ({ssl_summary.get('issuer', 'DigiCert')}, {tls_ver}). "
-    exec_summary += f"Domain registered via {whois_summary.get('registrar', 'MarkMonitor')} (expiry: {whois_summary.get('expiry_date', 'N/A')})."
+    elif ssl_summary.get("is_valid"):
+        exec_summary += f"SSL/TLS certificate status: Valid ({ssl_summary.get('issuer', 'Valid CA')}, {tls_ver}). "
+    if whois_summary.get("registrar") and whois_summary.get("registrar") != "Not Available":
+        exec_summary += f"Domain registered via {whois_summary.get('registrar')} (expiry: {whois_summary.get('expiry_date', 'N/A')})."
 
     return {
         "security_score": overall_score,
@@ -861,31 +1070,53 @@ def calculate_security_score(ssl_summary: Dict[str, Any], headers_summary: Dict[
         "executive_summary": exec_summary
     }
 
-
 def perform_security_analysis(target_url: str) -> Dict[str, Any]:
-    """Execute complete multi-module security assessment for a target."""
-    ip_addr = get_target_ip(target_url)
+    """Execute complete multi-module real security assessment for a target."""
+    target_clean = target_url.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
+    ip_addr = get_target_ip(target_clean)
+    
     ssl_summary = analyze_ssl(target_url)
     headers_summary = analyze_headers(target_url)
     whois_summary = analyze_whois(target_url)
     owasp_summary = analyze_owasp_top10(target_url)
+    ports_summary = analyze_ports(target_clean)
 
-    target_clean = target_url.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
-    cve_findings = query_nvd_cve("Tomcat" if "api" in target_clean else "OpenSSL")
+    # Search CVEs for detected server banner if present
+    cve_findings: List[Dict[str, Any]] = []
+    # Check if OWASP or headers detected a banner
+    try:
+        req = urllib.request.Request(
+            target_url if "://" in target_url else f"https://{target_url}",
+            headers={'User-Agent': 'CloudVuln-Auditor/2.0'}
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            banner = resp.headers.get("Server") or resp.headers.get("X-Powered-By") or ""
+            if banner:
+                tech = banner.split("/")[0] if "/" in banner else banner
+                if len(tech) > 2:
+                    cve_findings = query_nvd_cve(tech)
+    except Exception:
+        cve_findings = []
 
-    score_data = calculate_security_score(ssl_summary, headers_summary, cve_findings, whois_summary)
+    score_data = calculate_security_score(ssl_summary, headers_summary, cve_findings, whois_summary, ports_summary)
 
     recommendations = []
-    if not ssl_summary["is_valid"]:
-        recommendations.append("CRITICAL: Certificate expired or invalid. Renew SSL/TLS certificate immediately.")
+    if not ssl_summary.get("is_valid"):
+        recommendations.append("Renew or install a valid SSL/TLS certificate from a trusted Certificate Authority.")
+    
+    for chk in headers_summary.get("checks", []):
+        if not chk.get("present") and chk.get("value") != "Unable to Verify":
+            recommendations.append(f"Configure HTTP Header: {chk['name']}. {chk['recommendation']}")
 
-    for chk in headers_summary["checks"]:
-        if not chk["present"]:
-            recommendations.append(f"HTTP Header Missing: {chk['name']}. {chk['recommendation']}")
+    if ports_summary.get("open_ports_count", 0) > 0:
+        open_p_nums = [str(p["port"]) for p in ports_summary.get("ports", [])]
+        recommendations.append(f"Audit exposed open ports ({', '.join(open_p_nums)}) and restrict ingress access via firewall or Security Groups.")
 
-    recommendations.append("Audit all exposed open ports and restrict ingress traffic via AWS/Azure Security Groups.")
-    recommendations.append("Establish automated container vulnerability scanning in CI/CD pipeline.")
-    recommendations.append(f"Verify WHOIS registrar contact & domain auto-renewal policy ({whois_summary.get('registrar')}).")
+    if cve_findings:
+        recommendations.append("Apply vendor security patches for software dependencies with known public CVEs.")
+
+    if not recommendations:
+        recommendations.append("Maintain existing security posture and automated periodic vulnerability scanning.")
 
     return {
         "target": target_clean,
@@ -903,6 +1134,7 @@ def perform_security_analysis(target_url: str) -> Dict[str, Any]:
         "owasp_summary": owasp_summary,
         "ssl_summary": ssl_summary,
         "headers_summary": headers_summary,
+        "ports_summary": ports_summary,
         "cve_findings": cve_findings,
         "recommendations": recommendations
     }

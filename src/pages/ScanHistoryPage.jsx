@@ -171,8 +171,8 @@ export const ScanHistoryPage = () => {
               <TableBody>
                 {scans.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-8 text-slate-500">
-                      No historical scan records found matching filter parameters.
+                    <TableCell colSpan={8} className="text-center py-8 text-slate-500 font-mono text-xs">
+                      {searchQuery || statusFilter !== 'all' ? 'No historical scan records found matching filter parameters.' : 'No completed scans available.'}
                     </TableCell>
                   </TableRow>
                 ) : (

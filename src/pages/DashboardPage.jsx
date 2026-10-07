@@ -45,15 +45,26 @@ const MetricCard = memo(({ label, value, sub, color, icon: Icon, borderHover }) 
   </Card>
 ));
 
-// ── Posture domain data (static, no API) ─────────────────────────────
-const POSTURE_DATA = [
-  { subject: 'SSL/TLS',  score: 85, fullMark: 100 },
-  { subject: 'Headers',  score: 65, fullMark: 100 },
-  { subject: 'OWASP 10', score: 75, fullMark: 100 },
-  { subject: 'Storage',  score: 78, fullMark: 100 },
-  { subject: 'Compute',  score: 88, fullMark: 100 },
-  { subject: 'Network',  score: 95, fullMark: 100 },
-];
+// ── Build domain posture from real scan data ─────────────────────────
+const buildPostureData = (scans) => {
+  if (!scans || scans.length === 0) return null;
+  const completedScans = scans.filter(s => s.scan_data);
+  if (completedScans.length === 0) return null;
+  const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+  const parseData = (s) => {
+    try { return typeof s.scan_data === 'string' ? JSON.parse(s.scan_data) : s.scan_data; }
+    catch { return null; }
+  };
+  const parsed = completedScans.map(parseData).filter(Boolean);
+  return [
+    { subject: 'SSL/TLS', score: avg(parsed.map(d => d.ssl_summary?.is_valid ? 90 : 30).filter(v => v > 0)), fullMark: 100 },
+    { subject: 'Headers', score: avg(parsed.map(d => d.headers_summary?.score).filter(v => v != null)), fullMark: 100 },
+    { subject: 'OWASP:2025', score: avg(parsed.map(d => d.owasp_summary?.overall_score).filter(v => v != null)), fullMark: 100 },
+    { subject: 'Security Score', score: avg(parsed.map(d => d.security_score).filter(v => v != null)), fullMark: 100 },
+    { subject: 'CVE Risk', score: avg(parsed.map(d => Math.max(0, 100 - (d.critical_count || 0) * 20 - (d.high_count || 0) * 10)).filter(v => v != null)), fullMark: 100 },
+    { subject: 'Ports', score: avg(parsed.map(d => d.ports_summary ? Math.max(0, 100 - (d.ports_summary.open_ports_count || 0) * 10) : 85).filter(v => v > 0)), fullMark: 100 },
+  ];
+};
 
 const EMPTY_SUMMARY = {
   total_scans: 0, monitored_assets: 0,
@@ -129,6 +140,7 @@ export const DashboardPage = () => {
   }, [fetchDashboardData, fetchCveFeed]);
 
   const totalVulns = riskStats?.severity_breakdown?.reduce((a, c) => a + c.value, 0) || 0;
+  const postureData = buildPostureData(recentScans);
 
   if (loading) return <PageSkeleton />;
 
@@ -279,8 +291,15 @@ export const DashboardPage = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="h-64 flex items-center justify-center">
+            {!postureData ? (
+              <div className="text-center space-y-2">
+                <RadarIcon className="w-8 h-8 text-slate-600 mx-auto" />
+                <p className="text-xs text-slate-400">No completed scans available.</p>
+                <p className="text-[11px] text-slate-500">Run scans with scan_data to populate the posture radar.</p>
+              </div>
+            ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <RadarChart cx="50%" cy="50%" outerRadius="70%" data={POSTURE_DATA}>
+              <RadarChart cx="50%" cy="50%" outerRadius="70%" data={postureData}>
                 <PolarGrid stroke="#1e293b" />
                 <PolarAngleAxis dataKey="subject" stroke="#94a3b8" fontSize={10} />
                 <PolarRadiusAxis angle={30} domain={[0, 100]} stroke="#334155" fontSize={9} />
@@ -288,6 +307,7 @@ export const DashboardPage = () => {
                 <Tooltip contentStyle={ChartTooltipStyle} />
               </RadarChart>
             </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -366,7 +386,7 @@ export const DashboardPage = () => {
           </CardHeader>
           <CardContent className="space-y-3">
             {recentReports.length === 0 ? (
-              <p className="text-xs text-slate-500 text-center py-6">No reports generated yet.</p>
+              <p className="text-xs text-slate-500 text-center py-6 font-mono">No reports available.</p>
             ) : (
               recentReports.map((rep) => (
                 <div key={rep.id} className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
@@ -401,7 +421,7 @@ export const DashboardPage = () => {
           </CardHeader>
           <CardContent className="p-0">
             {recentScans.length === 0 ? (
-              <p className="text-xs text-slate-500 text-center py-8">No scans found.</p>
+              <p className="text-xs text-slate-500 text-center py-8 font-mono">No completed scans available.</p>
             ) : (
               <Table>
                 <TableHeader>

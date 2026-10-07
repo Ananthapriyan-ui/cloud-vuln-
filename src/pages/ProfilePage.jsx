@@ -77,8 +77,8 @@ export const ProfilePage = () => {
         <div className="lg:col-span-2 space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle icon={ShieldCheck} subtitle="CloudVuln platform role and system privileges">
-                Account Information & Privileges
+              <CardTitle icon={ShieldCheck} subtitle="CloudVuln platform details and verified account status">
+                Account Information & Status
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -89,8 +89,8 @@ export const ProfilePage = () => {
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">
-                  <span className="text-slate-400 text-[11px]">Assigned Role</span>
-                  <p className="font-semibold text-slate-200">Security Analyst / Auditor</p>
+                  <span className="text-slate-400 text-[11px]">Primary Workspace</span>
+                  <p className="font-semibold text-slate-200">Cloud Security Suite</p>
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 space-y-1">

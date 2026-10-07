@@ -561,6 +561,26 @@ def analyze_owasp(req: schemas.SecurityAnalysisRequest):
     return analyzer.analyze_owasp_top10(req.target_url)
 
 
+@app.post("/api/analysis/ports", response_model=schemas.PortScanSummary)
+def analyze_ports_endpoint(req: schemas.SecurityAnalysisRequest):
+    return analyzer.analyze_ports(req.target_url)
+
+
+@app.get("/api/ports/scan", response_model=schemas.PortScanSummary)
+def scan_ports_get(target: str = "127.0.0.1"):
+    return analyzer.analyze_ports(target)
+
+
+@app.post("/api/analysis/headers", response_model=schemas.HeaderSummary)
+def analyze_headers_endpoint(req: schemas.SecurityAnalysisRequest):
+    return analyzer.analyze_headers(req.target_url)
+
+
+@app.post("/api/analysis/ssl", response_model=schemas.SSLSummary)
+def analyze_ssl_endpoint(req: schemas.SecurityAnalysisRequest):
+    return analyzer.analyze_ssl(req.target_url)
+
+
 # ──────────────────────────────────────────────
 # Scan History CRUD
 # ──────────────────────────────────────────────
@@ -569,23 +589,28 @@ def analyze_owasp(req: schemas.SecurityAnalysisRequest):
 def create_scan_record(
     scan_in: schemas.ScanCreate,
     db: Session = Depends(database.get_db),
+    current_user: Optional[models.User] = Depends(security.get_optional_user),
 ):
-    import random
-    scan_ref = f"SCAN-2026-{random.randint(1000, 9999)}"
+    import datetime
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    scan_ref = f"SCAN-{now_utc.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
     new_scan = models.Scan(
         scan_ref=scan_ref,
         target=scan_in.target,
         provider=scan_in.provider or "AWS US-East-1",
-        scan_type=scan_in.scan_type or "Cloud Misconfig",
+        scan_type=scan_in.scan_type or "OWASP Top 10",
         status=scan_in.status or "passed",
         critical_count=scan_in.critical_count or 0,
         high_count=scan_in.high_count or 0,
         medium_count=scan_in.medium_count or 0,
         low_count=scan_in.low_count or 0,
         risk_score=scan_in.risk_score or 0.0,
-        duration=scan_in.duration or "2m 15s",
+        duration=scan_in.duration or "1m 15s",
+        owasp_version=scan_in.owasp_version or "2025",
+        user_id=current_user.id if current_user else scan_in.user_id,
         scan_data=scan_in.scan_data,
+        created_at=now_utc,
     )
     db.add(new_scan)
     db.commit()
@@ -596,10 +621,12 @@ def create_scan_record(
         scan_ref=scan_ref,
         target=scan_in.target,
         executive_summary=f"Automated Security Posture Analysis for target {scan_in.target}.",
-        scan_type=scan_in.scan_type or "Cloud Misconfig",
-        duration=scan_in.duration or "2m 15s",
+        scan_type=scan_in.scan_type or "OWASP Top 10",
+        duration=scan_in.duration or "1m 15s",
+        owasp_version=scan_in.owasp_version or "2025",
         html_generated=True,
         csv_generated=True,
+        created_at=now_utc,
     )
     db.add(new_report)
 
