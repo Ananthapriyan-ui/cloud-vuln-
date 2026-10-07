@@ -106,6 +106,9 @@ export const AuthProvider = ({ children }) => {
         try {
           const { data: { session } } = await client.auth.getSession();
           if (mounted && session?.user) {
+            if (session.access_token) {
+              storeTokens(session.access_token, session.refresh_token);
+            }
             setUser(buildUser(session.user));
             setLoading(false);
             return;
@@ -126,8 +129,12 @@ export const AuthProvider = ({ children }) => {
     if (client) {
       const { data } = client.auth.onAuthStateChange((event, session) => {
         if (session?.user) {
+          if (session.access_token) {
+            storeTokens(session.access_token, session.refresh_token);
+          }
           setUser(buildUser(session.user));
         } else if (event === 'SIGNED_OUT') {
+          clearTokens();
           setUser(null);
         }
       });
@@ -170,10 +177,14 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
+      const targetOrigin = window.location.hostname === 'cloudvulner.vercel.app'
+        ? 'https://cloud-vuln.vercel.app'
+        : window.location.origin;
+
       const { error } = await client.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin,
+          redirectTo: targetOrigin,
         },
       });
 

@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # CORS — accepts a comma-separated string, a JSON array string, or a list
     ALLOWED_ORIGINS: Any = [
         "https://cloud-vuln.vercel.app",
+        "https://cloudvulner.vercel.app",
         "https://github.com/Ananthapriyan-ui/cloud-vuln-.git",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
