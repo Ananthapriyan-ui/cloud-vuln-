@@ -20,10 +20,14 @@ dependencies = [
     "supabase>=2.3.0,<3.0.0",
 ]
 
+[tool.uv]
+package = false
+
 [tool.pyright]
 include = ["backend", "api"]
 extraPaths = ["backend", "."]
 
 [tool.pyrefly]
 search_path = ["backend", "."]
+
 
