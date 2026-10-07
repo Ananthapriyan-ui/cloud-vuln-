@@ -202,7 +202,7 @@ def compare_scans_data(prev_scan: models.Scan, latest_scan: models.Scan) -> Dict
         {"owasp_id": "A07:2025", "category": "Authentication Failures"},
         {"owasp_id": "A08:2025", "category": "Software or Data Integrity Failures"},
         {"owasp_id": "A09:2025", "category": "Security Logging & Alerting Failures"},
-        {"owasp_id": "A01:2025", "category": "Mishandling of Exceptional Conditions"},
+        {"owasp_id": "A10:2025", "category": "Mishandling of Exceptional Conditions"},
     ]
 
     prev_owasp_list = (prev_data.get("owasp_summary") or {}).get("findings") or []

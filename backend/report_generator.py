@@ -270,6 +270,10 @@ def _build_recommendations_section(recommendations: List[str]) -> str:
     )
     return (
         '<div class="section-title">&#9989; Priority Recommendations</div>'
+        f'<ul style="list-style:none;padding:0;margin-bottom:24px;">{items}</ul>'
+    )
+
+
 def _build_ports_section(ports_data: Dict) -> str:
     if not ports_data or not ports_data.get("ports"):
         return ""

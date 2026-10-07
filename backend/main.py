@@ -439,7 +439,7 @@ def get_dashboard_summary(db: Session = Depends(database.get_db)):
     avg_risk = db.query(func.avg(models.Scan.risk_score)).filter(models.Scan.status != "running").scalar()
     if avg_risk is not None:
         posture_score = max(0, min(100, int(100 - (avg_risk * 10))))
-        compliance_score = round(max(0.0, min(100.0, 100.0 - (avg_risk * 5)), 1))
+        compliance_score = round(max(0.0, min(100.0, 100.0 - (avg_risk * 5))), 1)
     else:
         posture_score = 100
         compliance_score = 100.0
