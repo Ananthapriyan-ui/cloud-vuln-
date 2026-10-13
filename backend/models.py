@@ -86,6 +86,7 @@ class ActivityLog(Base):
     text = Column(String(500), nullable=False)
     type = Column(String(20), default="info")  # info, success, warning, error
     time_ago = Column(String(50), default="Just now")
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     created_at = Column(DateTime, default=now_utc, index=True)
 
 

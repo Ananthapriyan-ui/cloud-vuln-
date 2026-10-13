@@ -59,6 +59,30 @@ class Settings(BaseSettings):
             return [origin.strip() for origin in raw.split(",") if origin.strip()]
         return ["http://localhost:3000", "http://127.0.0.1:3000"]
 
+    def model_post_init(self, __context: Any) -> None:
+        is_prod = str(self.APP_ENV).lower() in ("production", "prod")
+        insecure_defaults = {
+            "cloudvuln-secops-super-secret-jwt-key-2026-prod-grade-change-me",
+            "cloudvuln-secops-super-secret-refresh-key-2026-prod-grade-change-me",
+            "change-this-to-a-secure-random-64-character-secret-key-in-production",
+            "change-this-to-a-secure-random-64-character-refresh-key-in-production",
+            "secret",
+            "changeme",
+        }
+        if is_prod:
+            if not self.SECRET_KEY or self.SECRET_KEY in insecure_defaults or len(self.SECRET_KEY) < 32:
+                raise ValueError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: In production mode (APP_ENV=production), "
+                    "SECRET_KEY must be a strong, unique secret (minimum 32 characters) provided via environment variables. "
+                    "Default or known placeholder secrets are strictly forbidden."
+                )
+            if not self.REFRESH_SECRET_KEY or self.REFRESH_SECRET_KEY in insecure_defaults or len(self.REFRESH_SECRET_KEY) < 32:
+                raise ValueError(
+                    "CRITICAL SECURITY CONFIGURATION ERROR: In production mode (APP_ENV=production), "
+                    "REFRESH_SECRET_KEY must be a strong, unique secret (minimum 32 characters) provided via environment variables. "
+                    "Default or known placeholder secrets are strictly forbidden."
+                )
+
     class Config:
         env_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
         env_file_encoding = "utf-8"

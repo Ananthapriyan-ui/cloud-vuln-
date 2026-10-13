@@ -105,13 +105,20 @@ export const AuthProvider = ({ children }) => {
       if (client) {
         try {
           const { data: { session } } = await client.auth.getSession();
-          if (mounted && session?.user) {
-            if (session.access_token) {
-              storeTokens(session.access_token, session.refresh_token);
+          if (mounted && session?.user && session?.access_token) {
+            try {
+              const { ok, data } = await authFetch('/auth/oauth-sync', {
+                provider_token: session.access_token,
+              });
+              if (mounted && ok && data?.access_token) {
+                storeTokens(data.access_token, data.refresh_token);
+                setUser(buildUser(data.user || session.user));
+                setLoading(false);
+                return;
+              }
+            } catch (syncErr) {
+              console.error('OAuth backend sync failed:', syncErr);
             }
-            setUser(buildUser(session.user));
-            setLoading(false);
-            return;
           }
         } catch (err) {
           console.error('Supabase session check error:', err);
@@ -127,12 +134,19 @@ export const AuthProvider = ({ children }) => {
     let authListener = null;
     const client = getSupabase() || supabase;
     if (client) {
-      const { data } = client.auth.onAuthStateChange((event, session) => {
-        if (session?.user) {
-          if (session.access_token) {
-            storeTokens(session.access_token, session.refresh_token);
+      const { data } = client.auth.onAuthStateChange(async (event, session) => {
+        if (session?.user && session?.access_token) {
+          try {
+            const { ok, data: syncData } = await authFetch('/auth/oauth-sync', {
+              provider_token: session.access_token,
+            });
+            if (ok && syncData?.access_token) {
+              storeTokens(syncData.access_token, syncData.refresh_token);
+              setUser(buildUser(syncData.user || session.user));
+            }
+          } catch (syncErr) {
+            console.error('OAuth authStateChange sync failed:', syncErr);
           }
-          setUser(buildUser(session.user));
         } else if (event === 'SIGNED_OUT') {
           clearTokens();
           setUser(null);

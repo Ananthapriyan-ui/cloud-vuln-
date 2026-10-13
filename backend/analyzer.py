@@ -6,22 +6,40 @@ import urllib.request
 import json
 import time
 from typing import Dict, List, Any, Optional
+from ssrf_protection import (
+    validate_public_url,
+    validate_public_hostname_or_ip,
+    SafeRedirectHandler,
+)
 
 def get_target_ip(hostname: str) -> str:
-    """Resolve domain or hostname to IP address using system DNS resolver."""
+    """Resolve domain or hostname to IP address using system DNS resolver with SSRF validation."""
     try:
         if "://" in hostname:
             hostname = urllib.parse.urlparse(hostname).netloc
         hostname = hostname.split(":")[0].strip()
         if not hostname:
             return "Unavailable"
-        return socket.gethostbyname(hostname)
+        ips = validate_public_hostname_or_ip(hostname)
+        return ips[0] if ips else "Unavailable"
     except Exception:
         return "Unavailable"
 
 def analyze_ssl(target_url: str) -> Dict[str, Any]:
     """Inspect live SSL/TLS certificate details and security posture without mock data."""
-    formatted_url = target_url if "://" in target_url else f"https://{target_url}"
+    try:
+        formatted_url = validate_public_url(target_url)
+    except ValueError as e:
+        return {
+            "cert_status": "Blocked (SSRF)",
+            "issuer": "Not Available",
+            "expiry_date": "Not Available",
+            "tls_version": "Not Available",
+            "cipher": "Not Available",
+            "is_valid": False,
+            "days_until_expiration": 0,
+            "recommendations": [f"SSL connection blocked: target resolves to restricted/internal address ({e})."]
+        }
     parsed = urllib.parse.urlparse(formatted_url)
     hostname = (parsed.netloc or parsed.path).split(":")[0].strip()
     port = 443
@@ -111,7 +129,21 @@ def analyze_ssl(target_url: str) -> Dict[str, Any]:
 
 def analyze_headers(target_url: str) -> Dict[str, Any]:
     """Check presence and value of standard HTTP security headers using live response inspection."""
-    formatted_url = target_url if "://" in target_url else f"https://{target_url}"
+    try:
+        formatted_url = validate_public_url(target_url)
+    except ValueError as e:
+        return {
+            "score": 0,
+            "passed_count": 0,
+            "total_count": 0,
+            "checks": [{
+                "name": "SSRF Protection",
+                "present": False,
+                "value": "Blocked",
+                "risk_if_missing": f"Header audit blocked by SSRF protection: {str(e)}",
+                "recommendation": "Provide a valid, publicly routable domain or IP."
+            }]
+        }
     
     header_definitions = [
         {
@@ -154,7 +186,8 @@ def analyze_headers(target_url: str) -> Dict[str, Any]:
             formatted_url,
             headers={'User-Agent': 'CloudVuln-Security-Auditor/2.0'}
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        opener = urllib.request.build_opener(SafeRedirectHandler())
+        with opener.open(req, timeout=5) as resp:
             resp_headers = {k.lower(): v for k, v in resp.headers.items()}
             
             for h in header_definitions:
@@ -338,7 +371,21 @@ def analyze_ports(target_url_or_host: str, port_list: Optional[List[int]] = None
         hostname = urllib.parse.urlparse(hostname).netloc
     hostname = hostname.split(":")[0].strip()
 
-    ip_address = get_target_ip(hostname)
+    try:
+        ips = validate_public_hostname_or_ip(hostname)
+        ip_address = ips[0]
+    except ValueError as e:
+        return {
+            "target": hostname,
+            "ip_address": "SSRF Blocked",
+            "open_ports_count": 0,
+            "closed_ports_count": 0,
+            "total_scanned": 0,
+            "ports": [],
+            "status": f"Port scan blocked by SSRF protection: {str(e)}",
+            "scan_duration": "0s"
+        }
+
     if ip_address == "Unavailable":
         return {
             "target": hostname,
@@ -426,7 +473,30 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
     and NVD CVE associations strictly mapped to the official OWASP Top 10:2025 taxonomy.
     Unverifiable categories return 'Unable to Verify'.
     """
-    formatted_url = target_url if "://" in target_url else f"https://{target_url}"
+    try:
+        formatted_url = validate_public_url(target_url)
+    except ValueError as e:
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return {
+            "target": target_url,
+            "score": 0,
+            "risk_level": "Critical",
+            "scanned_at": now_str,
+            "findings": [{
+                "owasp_id": "SSRF-BLOCK",
+                "title": "SSRF Protection Triggered",
+                "category": "A10:2025 - Server-Side Request Forgery",
+                "status": "Failed",
+                "severity": "Critical",
+                "cvss_score": 9.8,
+                "affected_component": "Target Host",
+                "description": f"Inspection blocked: target resolves to restricted/internal network ({e})",
+                "recommendation": "Specify a valid public domain or IP address.",
+                "remediation_cmd": "N/A"
+            }],
+            "owasp_version": "2025"
+        }
+
     parsed = urllib.parse.urlparse(formatted_url)
     domain = (parsed.netloc or parsed.path).split(":")[0].strip()
 
@@ -443,7 +513,8 @@ def analyze_owasp_top10(target_url: str) -> Dict[str, Any]:
             formatted_url,
             headers={'User-Agent': 'CloudVuln-OWASP-Auditor/2.0'}
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        opener = urllib.request.build_opener(SafeRedirectHandler())
+        with opener.open(req, timeout=5) as resp:
             target_reachable = True
             for k, v in resp.headers.items():
                 resp_headers[k.lower()] = v
@@ -1071,14 +1142,15 @@ def calculate_security_score(
     }
 
 def perform_security_analysis(target_url: str) -> Dict[str, Any]:
-    """Execute complete multi-module real security assessment for a target."""
-    target_clean = target_url.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
+    """Execute complete multi-module real security assessment for a target with SSRF validation."""
+    validated_url = validate_public_url(target_url)
+    target_clean = validated_url.replace("http://", "").replace("https://", "").split("/")[0].split(":")[0]
     ip_addr = get_target_ip(target_clean)
     
-    ssl_summary = analyze_ssl(target_url)
-    headers_summary = analyze_headers(target_url)
-    whois_summary = analyze_whois(target_url)
-    owasp_summary = analyze_owasp_top10(target_url)
+    ssl_summary = analyze_ssl(validated_url)
+    headers_summary = analyze_headers(validated_url)
+    whois_summary = analyze_whois(validated_url)
+    owasp_summary = analyze_owasp_top10(validated_url)
     ports_summary = analyze_ports(target_clean)
 
     # Search CVEs for detected server banner if present
@@ -1086,10 +1158,11 @@ def perform_security_analysis(target_url: str) -> Dict[str, Any]:
     # Check if OWASP or headers detected a banner
     try:
         req = urllib.request.Request(
-            target_url if "://" in target_url else f"https://{target_url}",
+            validated_url,
             headers={'User-Agent': 'CloudVuln-Auditor/2.0'}
         )
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        opener = urllib.request.build_opener(SafeRedirectHandler())
+        with opener.open(req, timeout=4) as resp:
             banner = resp.headers.get("Server") or resp.headers.get("X-Powered-By") or ""
             if banner:
                 tech = banner.split("/")[0] if "/" in banner else banner

@@ -23,7 +23,9 @@ pwd_context = CryptContext(
     bcrypt__rounds=12,
 )
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+import httpx
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
 
 
 # ──────────────────────────────────────────────
@@ -93,8 +95,64 @@ def verify_refresh_token(token: str) -> str:
         )
 
 
+def verify_oauth_provider_token(provider_token: str) -> dict:
+    """
+    Cryptographically / server-side verifies a Google or Supabase OAuth token.
+    Extracts verified email and full name directly from the provider without trusting client claims.
+    Raises HTTPException(401) if invalid or unverified.
+    """
+    token_str = (provider_token or "").strip()
+    if not token_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing OAuth provider token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # 1. Attempt Google ID token verification via Google's tokeninfo API
+    try:
+        with httpx.Client(timeout=6.0) as client:
+            resp = client.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={token_str}")
+            if resp.status_code == 200:
+                data = resp.json()
+                email = data.get("email")
+                email_verified = data.get("email_verified")
+                if email and (email_verified is True or str(email_verified).lower() == "true"):
+                    name = data.get("name") or data.get("given_name") or email.split("@")[0]
+                    return {"email": email.lower(), "full_name": name, "provider": "google"}
+    except Exception as e:
+        logger.debug(f"Google tokeninfo check error: {e}")
+
+    # 2. Attempt Supabase Auth user verification if Supabase URL is configured
+    if settings.SUPABASE_URL:
+        try:
+            supabase_auth_url = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1/user"
+            headers = {
+                "Authorization": f"Bearer {token_str}",
+                "apikey": settings.SUPABASE_SERVICE_ROLE_KEY or "",
+            }
+            with httpx.Client(timeout=6.0) as client:
+                resp = client.get(supabase_auth_url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    email = data.get("email")
+                    if email:
+                        meta = data.get("user_metadata") or {}
+                        name = meta.get("full_name") or meta.get("name") or email.split("@")[0]
+                        return {"email": email.lower(), "full_name": name, "provider": "supabase"}
+        except Exception as e:
+            logger.debug(f"Supabase auth check error: {e}")
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Failed to verify OAuth identity with provider. Token is invalid or expired.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
     db: Session = Depends(database.get_db),
 ) -> models.User:
     """Decode access token and return the authenticated user."""
@@ -103,8 +161,21 @@ def get_current_user(
         detail="Could not validate security credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    actual_token = token
+    if not actual_token:
+        # Check query param for download links / new tab preview
+        actual_token = request.query_params.get("token")
+        if not actual_token:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                actual_token = auth_header[7:]
+
+    if not actual_token:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(actual_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email: str = payload.get("sub")
         token_type: str = payload.get("type", "access")
         if not email or token_type != "access":
@@ -135,9 +206,15 @@ def get_optional_user(
 ) -> Optional[models.User]:
     """Returns the current user or None — never raises 401."""
     auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
+    token = None
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        token = request.query_params.get("token")
+
+    if not token:
         return None
-    token = auth_header[7:]
+
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         email = payload.get("sub")

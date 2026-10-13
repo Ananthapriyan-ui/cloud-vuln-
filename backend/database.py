@@ -106,6 +106,9 @@ def init_db():
                     conn.commit()
             if "reports" in tables:
                 columns = [c["name"] for c in inspector.get_columns("reports")]
+                if "owasp_version" not in columns:
+                    conn.execute(text("ALTER TABLE reports ADD COLUMN owasp_version VARCHAR(10) DEFAULT '2025';"))
+                    conn.commit()
                 if "storage_path" not in columns:
                     conn.execute(text("ALTER TABLE reports ADD COLUMN storage_path VARCHAR(500);"))
                     conn.commit()
@@ -114,6 +117,11 @@ def init_db():
                     conn.commit()
                 if "file_type" not in columns:
                     conn.execute(text("ALTER TABLE reports ADD COLUMN file_type VARCHAR(20);"))
+                    conn.commit()
+            if "activity_logs" in tables:
+                columns = [c["name"] for c in inspector.get_columns("activity_logs")]
+                if "user_id" not in columns:
+                    conn.execute(text("ALTER TABLE activity_logs ADD COLUMN user_id INTEGER;"))
                     conn.commit()
         logger.info("Supabase PostgreSQL database schema verified and initialized.")
     except Exception as e:

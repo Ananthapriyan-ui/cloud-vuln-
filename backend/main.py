@@ -186,6 +186,8 @@ async def security_middleware(request: Request, call_next):
 # Global Exception Handlers
 # ──────────────────────────────────────────────
 
+from fastapi.encoders import jsonable_encoder
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     logger.warning(
@@ -193,7 +195,12 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     )
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": True, "message": str(exc.detail), "status_code": exc.status_code},
+        content={
+            "error": True,
+            "message": str(exc.detail),
+            "detail": str(exc.detail),
+            "status_code": exc.status_code,
+        },
         headers=getattr(exc, "headers", None),
     )
 
@@ -214,7 +221,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "error": True,
             "message": message,
             "status_code": 422,
-            "detail": errors,
+            "detail": jsonable_encoder(errors),
         },
     )
 
@@ -366,19 +373,24 @@ def get_me(current_user: models.User = Depends(security.get_current_user)):
 @app.post("/api/auth/oauth-sync", response_model=schemas.Token)
 def oauth_sync(req: schemas.OAuthSyncRequest, db: Session = Depends(database.get_db)):
     """
-    Synchronizes a verified Google OAuth user into Supabase PostgreSQL.
-    If the user does not exist, creates the account without requiring a password.
-    If the user already exists, updates last_login and issues valid JWT tokens.
+    Synchronizes a verified Google / Supabase OAuth user into the database.
+    Verifies provider token cryptographically and derives identity strictly from the provider,
+    preventing arbitrary email impersonation.
     """
-    user = db.query(models.User).filter(models.User.email == req.email).first()
+    token_str = req.provider_token or req.id_token
+    token_data = security.verify_oauth_provider_token(token_str)
+    verified_email = token_data["email"]
+    verified_name = token_data.get("full_name") or verified_email.split("@")[0]
+
+    user = db.query(models.User).filter(models.User.email == verified_email).first()
     import datetime
     now = datetime.datetime.now(datetime.timezone.utc)
 
     if not user:
-        # Create user record in Supabase PostgreSQL
+        # Create user record in database
         user = models.User(
-            email=req.email,
-            full_name=req.full_name or req.email.split("@")[0],
+            email=verified_email,
+            full_name=verified_name,
             hashed_password=security.get_password_hash(security.secrets.token_urlsafe(32)),
             is_active=True,
             created_at=now,
@@ -387,11 +399,11 @@ def oauth_sync(req: schemas.OAuthSyncRequest, db: Session = Depends(database.get
         db.add(user)
         db.commit()
         db.refresh(user)
-        logger.info(f"Google OAuth user created in Supabase PostgreSQL: {user.email}")
+        logger.info(f"Verified OAuth user registered: {user.email} (provider: {token_data.get('provider')})")
     else:
         user.last_login = now
         db.commit()
-        logger.info(f"Google OAuth user logged in from Supabase PostgreSQL: {user.email}")
+        logger.info(f"Verified OAuth user logged in: {user.email} (provider: {token_data.get('provider')})")
 
     access_token = security.create_access_token(data={"sub": user.email})
     refresh_token = security.create_refresh_token(data={"sub": user.email})
@@ -415,10 +427,13 @@ def logout(current_user: models.User = Depends(security.get_current_user)):
 # ──────────────────────────────────────────────
 
 @app.get("/api/dashboard/summary", response_model=schemas.DashboardSummary)
-def get_dashboard_summary(db: Session = Depends(database.get_db)):
+def get_dashboard_summary(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
     from sqlalchemy import func
 
-    # Aggregate counts in a single query
+    # Aggregate counts for current user's scans
     result = db.query(
         func.count(models.Scan.id).label("total_scans"),
         func.coalesce(func.sum(models.Scan.critical_count), 0).label("critical"),
@@ -426,17 +441,22 @@ def get_dashboard_summary(db: Session = Depends(database.get_db)):
         func.coalesce(func.sum(models.Scan.medium_count), 0).label("medium"),
         func.coalesce(func.sum(models.Scan.low_count), 0).label("low"),
         func.count(func.distinct(models.Scan.target)).label("monitored_assets"),
-    ).first()
+    ).filter(models.Scan.user_id == current_user.id).first()
 
     total_scans = result.total_scans if result else 0
     monitored_assets = result.monitored_assets if (result and result.monitored_assets) else (1 if total_scans > 0 else 0)
 
     active_scans = db.query(models.Scan).filter(
-        models.Scan.status == "running"
+        models.Scan.status == "running",
+        models.Scan.user_id == current_user.id,
     ).count()
 
-    # Calculate real posture score from latest completed scans
-    avg_risk = db.query(func.avg(models.Scan.risk_score)).filter(models.Scan.status != "running").scalar()
+    # Calculate real posture score from latest completed scans of current user
+    avg_risk = (
+        db.query(func.avg(models.Scan.risk_score))
+        .filter(models.Scan.status != "running", models.Scan.user_id == current_user.id)
+        .scalar()
+    )
     if avg_risk is not None:
         posture_score = max(0, min(100, int(100 - (avg_risk * 10))))
         compliance_score = round(max(0.0, min(100.0, 100.0 - (avg_risk * 5))), 1)
@@ -459,7 +479,10 @@ def get_dashboard_summary(db: Session = Depends(database.get_db)):
 
 
 @app.get("/api/dashboard/risk-statistics", response_model=schemas.RiskStatisticsResponse)
-def get_risk_statistics(db: Session = Depends(database.get_db)):
+def get_risk_statistics(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
     from sqlalchemy import func
 
     result = db.query(
@@ -467,7 +490,7 @@ def get_risk_statistics(db: Session = Depends(database.get_db)):
         func.coalesce(func.sum(models.Scan.high_count), 0).label("high"),
         func.coalesce(func.sum(models.Scan.medium_count), 0).label("medium"),
         func.coalesce(func.sum(models.Scan.low_count), 0).label("low"),
-    ).first()
+    ).filter(models.Scan.user_id == current_user.id).first()
 
     critical = int(result.critical) if result else 0
     high = int(result.high) if result else 0
@@ -482,10 +505,10 @@ def get_risk_statistics(db: Session = Depends(database.get_db)):
         {"name": "Info",     "value": 0,        "color": "#64748b"},
     ]
 
-    # Calculate real chronological trend history from completed scans in DB
+    # Calculate real chronological trend history from completed scans of current user in DB
     completed_scans = (
         db.query(models.Scan)
-        .filter(models.Scan.status != "running")
+        .filter(models.Scan.status != "running", models.Scan.user_id == current_user.id)
         .order_by(models.Scan.created_at.asc())
         .all()
     )
@@ -505,9 +528,13 @@ def get_risk_statistics(db: Session = Depends(database.get_db)):
 
 
 @app.get("/api/dashboard/recent-scans", response_model=List[schemas.ScanResponse])
-def get_recent_scans(db: Session = Depends(database.get_db)):
+def get_recent_scans(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
     return (
         db.query(models.Scan)
+        .filter(models.Scan.user_id == current_user.id)
         .order_by(models.Scan.created_at.desc())
         .limit(10)
         .all()
@@ -515,9 +542,13 @@ def get_recent_scans(db: Session = Depends(database.get_db)):
 
 
 @app.get("/api/dashboard/activity", response_model=List[schemas.ActivityLogResponse])
-def get_recent_activity(db: Session = Depends(database.get_db)):
+def get_recent_activity(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
     return (
         db.query(models.ActivityLog)
+        .filter(models.ActivityLog.user_id == current_user.id)
         .order_by(models.ActivityLog.created_at.desc())
         .limit(10)
         .all()
@@ -525,13 +556,14 @@ def get_recent_activity(db: Session = Depends(database.get_db)):
 
 
 # ──────────────────────────────────────────────
-# Security Analysis & CVE
+# Security Analysis & CVE (Authorized Endpoints)
 # ──────────────────────────────────────────────
 
 @app.post("/api/analysis/target", response_model=schemas.SecurityAnalysisResponse)
 def analyze_security_target(
     req: schemas.SecurityAnalysisRequest,
     db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
 ):
     result = analyzer.perform_security_analysis(req.target_url)
 
@@ -539,57 +571,79 @@ def analyze_security_target(
         text=f"Security analysis executed for {result['target']} (Score: {result['security_score']}/100)",
         type="info" if result["risk_level"] in ("Low", "Medium") else "warning",
         time_ago="Just now",
+        user_id=current_user.id,
     ))
     db.commit()
     return result
 
 
 @app.get("/api/cve/search", response_model=List[schemas.CVEResult])
-def search_cve_database(query: str = "Tomcat"):
+def search_cve_database(
+    query: str = "Tomcat",
+    current_user: models.User = Depends(security.get_current_user),
+):
     if not query or len(query) > 200:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid CVE query")
     return analyzer.query_nvd_cve(query)
 
 
 @app.get("/api/whois/lookup", response_model=schemas.WhoisSummary)
-def lookup_whois(domain: str = "cloudvuln.io"):
+def lookup_whois(
+    domain: str = "cloudvuln.io",
+    current_user: models.User = Depends(security.get_current_user),
+):
     return analyzer.analyze_whois(domain)
 
 
 @app.post("/api/analysis/owasp", response_model=schemas.OWASPSummary)
-def analyze_owasp(req: schemas.SecurityAnalysisRequest):
+def analyze_owasp(
+    req: schemas.SecurityAnalysisRequest,
+    current_user: models.User = Depends(security.get_current_user),
+):
     return analyzer.analyze_owasp_top10(req.target_url)
 
 
 @app.post("/api/analysis/ports", response_model=schemas.PortScanSummary)
-def analyze_ports_endpoint(req: schemas.SecurityAnalysisRequest):
+def analyze_ports_endpoint(
+    req: schemas.SecurityAnalysisRequest,
+    current_user: models.User = Depends(security.get_current_user),
+):
     return analyzer.analyze_ports(req.target_url)
 
 
 @app.get("/api/ports/scan", response_model=schemas.PortScanSummary)
-def scan_ports_get(target: str = "127.0.0.1"):
+def scan_ports_get(
+    target: str = "scanme.nmap.org",
+    current_user: models.User = Depends(security.get_current_user),
+):
     return analyzer.analyze_ports(target)
 
 
 @app.post("/api/analysis/headers", response_model=schemas.HeaderSummary)
-def analyze_headers_endpoint(req: schemas.SecurityAnalysisRequest):
+def analyze_headers_endpoint(
+    req: schemas.SecurityAnalysisRequest,
+    current_user: models.User = Depends(security.get_current_user),
+):
     return analyzer.analyze_headers(req.target_url)
 
 
 @app.post("/api/analysis/ssl", response_model=schemas.SSLSummary)
-def analyze_ssl_endpoint(req: schemas.SecurityAnalysisRequest):
+def analyze_ssl_endpoint(
+    req: schemas.SecurityAnalysisRequest,
+    current_user: models.User = Depends(security.get_current_user),
+):
     return analyzer.analyze_ssl(req.target_url)
 
 
 # ──────────────────────────────────────────────
-# Scan History CRUD
+# Scan History CRUD (Authorized & User-Scoped)
 # ──────────────────────────────────────────────
 
 @app.post("/api/scans", response_model=schemas.ScanResponse, status_code=status.HTTP_201_CREATED)
 def create_scan_record(
     scan_in: schemas.ScanCreate,
     db: Session = Depends(database.get_db),
-    current_user: Optional[models.User] = Depends(security.get_optional_user),
+    current_user: models.User = Depends(security.get_current_user),
 ):
     import datetime
     now_utc = datetime.datetime.now(datetime.timezone.utc)
@@ -608,7 +662,7 @@ def create_scan_record(
         risk_score=scan_in.risk_score or 0.0,
         duration=scan_in.duration or "1m 15s",
         owasp_version=scan_in.owasp_version or "2025",
-        user_id=current_user.id if current_user else scan_in.user_id,
+        user_id=current_user.id,
         scan_data=scan_in.scan_data,
         created_at=now_utc,
     )
@@ -630,7 +684,7 @@ def create_scan_record(
     )
     db.add(new_report)
 
-    # Persist real findings into vulnerabilities table in Supabase PostgreSQL
+    # Persist real findings into vulnerabilities table
     if scan_in.scan_data:
         try:
             import json
@@ -672,10 +726,11 @@ def create_scan_record(
         text=f"New assessment recorded: {scan_ref} on {scan_in.target}",
         type="info" if scan_in.status == "passed" else "warning",
         time_ago="Just now",
+        user_id=current_user.id,
     ))
     db.commit()
     
-    logger.info(f"Scan created: {scan_ref} | target={scan_in.target}")
+    logger.info(f"Scan created: {scan_ref} | target={scan_in.target} | user={current_user.email}")
     return new_scan
 
 
@@ -687,6 +742,7 @@ def get_scans_history(
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
 ):
     # Validate pagination
     if limit < 1 or limit > 500:
@@ -694,7 +750,7 @@ def get_scans_history(
     if offset < 0:
         offset = 0
 
-    query = db.query(models.Scan)
+    query = db.query(models.Scan).filter(models.Scan.user_id == current_user.id)
 
     if search:
         search = search[:100]  # cap length
@@ -719,31 +775,38 @@ def get_scans_history(
     return query.offset(offset).limit(limit).all()
 
 
-def _get_scan_by_any_ref(scan_ref: str, db: Session) -> models.Scan:
-    scan = db.query(models.Scan).filter(models.Scan.scan_ref == scan_ref).first()
+def _get_scan_by_any_ref(scan_ref: str, db: Session, user_id: Optional[int] = None) -> Optional[models.Scan]:
+    base_query = db.query(models.Scan)
+    if user_id is not None:
+        base_query = base_query.filter(models.Scan.user_id == user_id)
+
+    scan = base_query.filter(models.Scan.scan_ref == scan_ref).first()
     if not scan:
         report = db.query(models.Report).filter(models.Report.report_ref == scan_ref).first()
         if report:
-            scan = db.query(models.Scan).filter(models.Scan.scan_ref == report.scan_ref).first()
+            scan = base_query.filter(models.Scan.scan_ref == report.scan_ref).first()
     if not scan and scan_ref.isdigit():
-        scan = db.query(models.Scan).filter(models.Scan.id == int(scan_ref)).first()
+        scan = base_query.filter(models.Scan.id == int(scan_ref)).first()
     if not scan:
-        scan = db.query(models.Scan).filter(models.Scan.target.ilike(f"%{scan_ref}%")).first()
+        scan = base_query.filter(models.Scan.target.ilike(f"%{scan_ref}%")).first()
     return scan
 
 
 # ──────────────────────────────────────────────
-# Scan Comparison & Trend Endpoints (Defined before parameterized {scan_ref})
+# Scan Comparison & Trend Endpoints
 # ──────────────────────────────────────────────
 
 @app.get("/api/scans/comparison-options", response_model=List[schemas.ScanComparisonOption])
-def get_comparison_options(db: Session = Depends(database.get_db)):
+def get_comparison_options(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
     """
-    Returns only real completed scans stored in the database for comparison selection.
+    Returns only completed scans belonging to the authenticated user for comparison selection.
     """
     scans = (
         db.query(models.Scan)
-        .filter(models.Scan.status != "running")
+        .filter(models.Scan.status != "running", models.Scan.user_id == current_user.id)
         .order_by(models.Scan.created_at.desc())
         .all()
     )
@@ -782,11 +845,12 @@ def get_comparison_options(db: Session = Depends(database.get_db)):
 def get_scans_trend(
     target: Optional[str] = None,
     db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
 ):
     """
-    Fetch real historical score and severity trend data across all completed scans in database.
+    Fetch real historical score and severity trend data across user's completed scans.
     """
-    return scan_comparator.get_real_scan_trend(db, target)
+    return scan_comparator.get_real_scan_trend(db, target, user_id=current_user.id)
 
 
 @app.get("/api/scans/compare/{prev_scan_ref}/{latest_scan_ref}", response_model=schemas.ScanComparisonResponse)
@@ -794,10 +858,10 @@ def compare_scans(
     prev_scan_ref: str,
     latest_scan_ref: str,
     db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
 ):
     """
-    Compare two real completed scans.
-    Validates scan existence, completed status, distinct scan refs, and returns structured comparison.
+    Compare two real completed scans belonging to the authenticated user.
     """
     if prev_scan_ref == latest_scan_ref:
         raise HTTPException(
@@ -805,18 +869,18 @@ def compare_scans(
             detail="Cannot compare a scan with itself. Please select two distinct completed scans.",
         )
 
-    prev_scan = _get_scan_by_any_ref(prev_scan_ref, db)
+    prev_scan = _get_scan_by_any_ref(prev_scan_ref, db, user_id=current_user.id)
     if not prev_scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Previous scan '{prev_scan_ref}' not found in database.",
+            detail=f"Previous scan '{prev_scan_ref}' not found in your account.",
         )
 
-    latest_scan = _get_scan_by_any_ref(latest_scan_ref, db)
+    latest_scan = _get_scan_by_any_ref(latest_scan_ref, db, user_id=current_user.id)
     if not latest_scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Latest scan '{latest_scan_ref}' not found in database.",
+            detail=f"Latest scan '{latest_scan_ref}' not found in your account.",
         )
 
     if prev_scan.status == "running":
@@ -841,9 +905,10 @@ def download_comparison_report(
     latest_scan_ref: str,
     format: str = "html",
     db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
 ):
     """
-    Download comparison report in HTML or CSV format based on real comparison results.
+    Download comparison report in HTML or CSV format based on user's scans.
     """
     if prev_scan_ref == latest_scan_ref:
         raise HTTPException(
@@ -851,18 +916,18 @@ def download_comparison_report(
             detail="Cannot generate comparison report for identical scans.",
         )
 
-    prev_scan = _get_scan_by_any_ref(prev_scan_ref, db)
+    prev_scan = _get_scan_by_any_ref(prev_scan_ref, db, user_id=current_user.id)
     if not prev_scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Previous scan '{prev_scan_ref}' not found in database.",
+            detail=f"Previous scan '{prev_scan_ref}' not found in your account.",
         )
 
-    latest_scan = _get_scan_by_any_ref(latest_scan_ref, db)
+    latest_scan = _get_scan_by_any_ref(latest_scan_ref, db, user_id=current_user.id)
     if not latest_scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Latest scan '{latest_scan_ref}' not found in database.",
+            detail=f"Latest scan '{latest_scan_ref}' not found in your account.",
         )
 
     comparison_result = scan_comparator.compare_scans_data(prev_scan, latest_scan)
@@ -888,8 +953,12 @@ def download_comparison_report(
 
 
 @app.get("/api/scans/{scan_ref}", response_model=schemas.ScanDetailResponse)
-def get_scan_by_ref(scan_ref: str, db: Session = Depends(database.get_db)):
-    scan = _get_scan_by_any_ref(scan_ref, db)
+def get_scan_by_ref(
+    scan_ref: str,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
+    scan = _get_scan_by_any_ref(scan_ref, db, user_id=current_user.id)
     if not scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -904,11 +973,11 @@ def delete_scan_record(
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(security.get_current_user),
 ):
-    scan = _get_scan_by_any_ref(scan_ref, db)
+    scan = _get_scan_by_any_ref(scan_ref, db, user_id=current_user.id)
     if not scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Scan '{scan_ref}' not found",
+            detail=f"Scan '{scan_ref}' not found or you do not have permission to delete it",
         )
     ref = scan.scan_ref
     db.delete(scan)
@@ -918,12 +987,20 @@ def delete_scan_record(
 
 
 # ──────────────────────────────────────────────
-# Report Endpoints
+# Report Endpoints (Authorized & User-Scoped)
 # ──────────────────────────────────────────────
 
 @app.get("/api/reports")
-def list_reports(db: Session = Depends(database.get_db)):
-    scans = db.query(models.Scan).order_by(models.Scan.created_at.desc()).all()
+def list_reports(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
+    scans = (
+        db.query(models.Scan)
+        .filter(models.Scan.user_id == current_user.id)
+        .order_by(models.Scan.created_at.desc())
+        .all()
+    )
     return [{
         "id": s.id,
         "scan_ref": s.scan_ref,
@@ -940,8 +1017,12 @@ def list_reports(db: Session = Depends(database.get_db)):
 
 
 @app.get("/api/reports/{scan_ref}")
-def get_report_by_scan_ref(scan_ref: str, db: Session = Depends(database.get_db)):
-    scan = _get_scan_by_any_ref(scan_ref, db)
+def get_report_by_scan_ref(
+    scan_ref: str,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
+    scan = _get_scan_by_any_ref(scan_ref, db, user_id=current_user.id)
     if not scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -974,10 +1055,14 @@ def get_report_by_scan_ref(scan_ref: str, db: Session = Depends(database.get_db)
 
 
 @app.get("/api/reports/{scan_ref}/html")
-def get_report_html(scan_ref: str, db: Session = Depends(database.get_db)):
+def get_report_html(
+    scan_ref: str,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
     import json
 
-    scan = _get_scan_by_any_ref(scan_ref, db)
+    scan = _get_scan_by_any_ref(scan_ref, db, user_id=current_user.id)
     if not scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1018,14 +1103,15 @@ def download_report_file(
     scan_ref: str,
     format: str = "html",
     db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
 ):
     import json
 
-    scan = _get_scan_by_any_ref(scan_ref, db)
+    scan = _get_scan_by_any_ref(scan_ref, db, user_id=current_user.id)
     if not scan:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Report for scan '{scan_ref}' not found",
+            detail=f"Report for scan '{scan_ref}' not found in your account",
         )
 
     parsed_data = {}

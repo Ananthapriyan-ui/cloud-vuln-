@@ -490,11 +490,14 @@ def compare_scans_data(prev_scan: models.Scan, latest_scan: models.Scan) -> Dict
     }
 
 
-def get_real_scan_trend(db: Session, target: Optional[str] = None) -> Dict[str, Any]:
+def get_real_scan_trend(db: Session, target: Optional[str] = None, user_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Fetch all real completed scans from the database and calculate chronological trend data.
+    Restricts to user_id when specified for multi-tenant isolation.
     """
     query = db.query(models.Scan).filter(models.Scan.status != "running")
+    if user_id is not None:
+        query = query.filter(models.Scan.user_id == user_id)
     if target and target.strip():
         query = query.filter(models.Scan.target == target.strip())
 

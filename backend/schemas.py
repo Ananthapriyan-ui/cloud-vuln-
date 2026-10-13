@@ -2,6 +2,7 @@ import re
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
+from ssrf_protection import validate_public_url
 
 
 # ──────────────────────────────────────────────
@@ -59,8 +60,15 @@ class UserResponse(BaseModel):
 
 
 class OAuthSyncRequest(BaseModel):
-    email: EmailStr
-    full_name: Optional[str] = None
+    provider_token: Optional[str] = None
+    id_token: Optional[str] = None
+
+    @model_validator(mode="after")
+    def check_token(self) -> "OAuthSyncRequest":
+        token = self.provider_token or self.id_token
+        if not token or not token.strip():
+            raise ValueError("An OAuth id_token or provider_token is required for identity verification.")
+        return self
 
 
 class Token(BaseModel):
@@ -148,12 +156,7 @@ class ScanCreate(BaseModel):
     @field_validator("target")
     @classmethod
     def validate_target(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Target cannot be blank")
-        if len(v) > 500:
-            raise ValueError("Target URL too long (max 500 chars)")
-        return v
+        return validate_public_url(v)
 
     @field_validator("status")
     @classmethod
@@ -258,17 +261,7 @@ class SecurityAnalysisRequest(BaseModel):
     @field_validator("target_url")
     @classmethod
     def validate_target_url(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Target URL cannot be blank")
-        if len(v) > 2000:
-            raise ValueError("Target URL too long (max 2000 chars)")
-        # Basic sanity: strip dangerous chars
-        dangerous = ["<", ">", '"', "'", ";", "`"]
-        for ch in dangerous:
-            if ch in v:
-                raise ValueError(f"Target URL contains invalid character: {ch}")
-        return v
+        return validate_public_url(v)
 
 
 class SSLSummary(BaseModel):
