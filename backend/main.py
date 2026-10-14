@@ -78,8 +78,11 @@ logger = logging.getLogger("CloudVulnEngine")
 # App bootstrap
 # ──────────────────────────────────────────────
 
-database.init_db()
-seed_database()
+try:
+    database.init_db()
+    seed_database()
+except Exception as e:
+    logger.error(f"Startup DB init error: {e}")
 
 app = FastAPI(
     title=config.settings.PROJECT_NAME,
