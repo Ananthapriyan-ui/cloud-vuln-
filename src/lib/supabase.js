@@ -12,8 +12,17 @@ let supabase = null;
 export function getSupabase() {
   if (supabase) return supabase;
 
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  let supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || '').trim();
+  const supabaseAnonKey = (import.meta.env.VITE_SUPABASE_ANON_KEY || '').trim();
+
+  if (supabaseUrl) {
+    if (supabaseUrl.endsWith('/rest/v1/')) {
+      supabaseUrl = supabaseUrl.slice(0, -9);
+    } else if (supabaseUrl.endsWith('/rest/v1')) {
+      supabaseUrl = supabaseUrl.slice(0, -8);
+    }
+    supabaseUrl = supabaseUrl.replace(/\/+$/, '');
+  }
 
   if (supabaseUrl && supabaseAnonKey) {
     try {

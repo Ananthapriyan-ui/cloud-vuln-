@@ -197,8 +197,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         status_code=exc.status_code,
         content={
             "error": True,
-            "message": str(exc.detail),
-            "detail": str(exc.detail),
+            "message": exc.detail,
+            "detail": exc.detail,
             "status_code": exc.status_code,
         },
         headers=getattr(exc, "headers", None),
@@ -327,7 +327,7 @@ def login(user_credentials: schemas.UserLogin, db: Session = Depends(database.ge
 
     # Update last_login
     import datetime
-    user.last_login = datetime.datetime.now(datetime.timezone.utc)
+    setattr(user, "last_login", datetime.datetime.now(datetime.timezone.utc))
     db.commit()
 
     access_token = security.create_access_token(data={"sub": user.email})
@@ -378,6 +378,11 @@ def oauth_sync(req: schemas.OAuthSyncRequest, db: Session = Depends(database.get
     preventing arbitrary email impersonation.
     """
     token_str = req.provider_token or req.id_token
+    if not token_str:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing OAuth provider token or id_token.",
+        )
     token_data = security.verify_oauth_provider_token(token_str)
     verified_email = token_data["email"]
     verified_name = token_data.get("full_name") or verified_email.split("@")[0]
@@ -401,7 +406,7 @@ def oauth_sync(req: schemas.OAuthSyncRequest, db: Session = Depends(database.get
         db.refresh(user)
         logger.info(f"Verified OAuth user registered: {user.email} (provider: {token_data.get('provider')})")
     else:
-        user.last_login = now
+        setattr(user, "last_login", now)
         db.commit()
         logger.info(f"Verified OAuth user logged in: {user.email} (provider: {token_data.get('provider')})")
 
@@ -434,17 +439,22 @@ def get_dashboard_summary(
     from sqlalchemy import func
 
     # Aggregate counts for current user's scans
-    result = db.query(
-        func.count(models.Scan.id).label("total_scans"),
-        func.coalesce(func.sum(models.Scan.critical_count), 0).label("critical"),
-        func.coalesce(func.sum(models.Scan.high_count), 0).label("high"),
-        func.coalesce(func.sum(models.Scan.medium_count), 0).label("medium"),
-        func.coalesce(func.sum(models.Scan.low_count), 0).label("low"),
-        func.count(func.distinct(models.Scan.target)).label("monitored_assets"),
+    row = db.query(
+        func.count(models.Scan.id),
+        func.coalesce(func.sum(models.Scan.critical_count), 0),
+        func.coalesce(func.sum(models.Scan.high_count), 0),
+        func.coalesce(func.sum(models.Scan.medium_count), 0),
+        func.coalesce(func.sum(models.Scan.low_count), 0),
+        func.count(func.distinct(models.Scan.target)),
     ).filter(models.Scan.user_id == current_user.id).first()
 
-    total_scans = result.total_scans if result else 0
-    monitored_assets = result.monitored_assets if (result and result.monitored_assets) else (1 if total_scans > 0 else 0)
+    total_scans = int(row[0] or 0) if row else 0
+    critical_vulns = int(row[1] or 0) if row else 0
+    high_vulns = int(row[2] or 0) if row else 0
+    medium_vulns = int(row[3] or 0) if row else 0
+    low_vulns = int(row[4] or 0) if row else 0
+    monitored_assets_raw = int(row[5] or 0) if row else 0
+    monitored_assets = monitored_assets_raw if monitored_assets_raw else (1 if total_scans > 0 else 0)
 
     active_scans = db.query(models.Scan).filter(
         models.Scan.status == "running",
@@ -467,10 +477,10 @@ def get_dashboard_summary(
     return {
         "total_scans": total_scans,
         "monitored_assets": monitored_assets,
-        "critical_vulnerabilities": result.critical if result else 0,
-        "high_vulnerabilities": result.high if result else 0,
-        "medium_vulnerabilities": result.medium if result else 0,
-        "low_vulnerabilities": result.low if result else 0,
+        "critical_vulnerabilities": critical_vulns,
+        "high_vulnerabilities": high_vulns,
+        "medium_vulnerabilities": medium_vulns,
+        "low_vulnerabilities": low_vulns,
         "info_vulnerabilities": 0,
         "active_scans": active_scans,
         "compliance_score": float(compliance_score),
@@ -485,17 +495,17 @@ def get_risk_statistics(
 ):
     from sqlalchemy import func
 
-    result = db.query(
-        func.coalesce(func.sum(models.Scan.critical_count), 0).label("critical"),
-        func.coalesce(func.sum(models.Scan.high_count), 0).label("high"),
-        func.coalesce(func.sum(models.Scan.medium_count), 0).label("medium"),
-        func.coalesce(func.sum(models.Scan.low_count), 0).label("low"),
+    row = db.query(
+        func.coalesce(func.sum(models.Scan.critical_count), 0),
+        func.coalesce(func.sum(models.Scan.high_count), 0),
+        func.coalesce(func.sum(models.Scan.medium_count), 0),
+        func.coalesce(func.sum(models.Scan.low_count), 0),
     ).filter(models.Scan.user_id == current_user.id).first()
 
-    critical = int(result.critical) if result else 0
-    high = int(result.high) if result else 0
-    medium = int(result.medium) if result else 0
-    low = int(result.low) if result else 0
+    critical = int(row[0] or 0) if row else 0
+    high = int(row[1] or 0) if row else 0
+    medium = int(row[2] or 0) if row else 0
+    low = int(row[3] or 0) if row else 0
 
     severity_breakdown = [
         {"name": "Critical", "value": critical, "color": "#ef4444"},
@@ -1153,10 +1163,10 @@ def download_report_file(
                 content_type="text/csv",
             )
             if storage_path and report_record:
-                report_record.storage_path = storage_path
-                report_record.file_name = filename
-                report_record.file_type = "csv"
-                report_record.csv_generated = True
+                setattr(report_record, "storage_path", storage_path)
+                setattr(report_record, "file_name", filename)
+                setattr(report_record, "file_type", "csv")
+                setattr(report_record, "csv_generated", True)
                 db.commit()
 
         return Response(
@@ -1178,10 +1188,10 @@ def download_report_file(
                 content_type="text/html",
             )
             if storage_path and report_record:
-                report_record.storage_path = storage_path
-                report_record.file_name = filename
-                report_record.file_type = "html"
-                report_record.html_generated = True
+                setattr(report_record, "storage_path", storage_path)
+                setattr(report_record, "file_name", filename)
+                setattr(report_record, "file_type", "html")
+                setattr(report_record, "html_generated", True)
                 db.commit()
 
         return Response(

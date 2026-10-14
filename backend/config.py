@@ -60,7 +60,15 @@ class Settings(BaseSettings):
         return ["http://localhost:3000", "http://127.0.0.1:3000"]
 
     def model_post_init(self, __context: Any) -> None:
-        is_prod = str(self.APP_ENV).lower() in ("production", "prod")
+        if self.SUPABASE_URL:
+            url = self.SUPABASE_URL.strip()
+            if url.endswith("/rest/v1/"):
+                url = url[:-9]
+            elif url.endswith("/rest/v1"):
+                url = url[:-8]
+            self.SUPABASE_URL = url.rstrip("/")
+
+        is_prod = self.APP_ENV.lower() in ("production", "prod")
         insecure_defaults = {
             "cloudvuln-secops-super-secret-jwt-key-2026-prod-grade-change-me",
             "cloudvuln-secops-super-secret-refresh-key-2026-prod-grade-change-me",
