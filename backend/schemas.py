@@ -462,4 +462,38 @@ class ScanTrendResponse(BaseModel):
     severity_trend: List[SeverityTrendPoint] = []
 
 
+# ──────────────────────────────────────────────
+# New Scanner Request Schemas
+# ──────────────────────────────────────────────
+
+class DNSScanRequest(BaseModel):
+    domain: str
+    dkim_selector: Optional[str] = None
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, v: str) -> str:
+        v = v.strip().lower()
+        if "://" in v:
+            from urllib.parse import urlparse
+            v = urlparse(v).netloc or urlparse(v).path
+        v = v.split(":")[0].split("/")[0]
+        if not v or len(v) < 3:
+            raise ValueError("Please enter a valid domain name (e.g. example.com)")
+        return v
+
+
+class DependencyScanRequest(BaseModel):
+    package_list: str
+    ecosystem: Optional[str] = "auto"
+
+    @field_validator("package_list")
+    @classmethod
+    def validate_package_list(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Package list cannot be empty. Enter one package per line.")
+        if len(v) > 5000:
+            raise ValueError("Package list too long. Maximum 5000 characters.")
+        return v
 

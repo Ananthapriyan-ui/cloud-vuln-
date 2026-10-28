@@ -84,6 +84,15 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let mounted = true;
 
+    // Clean up empty trailing hash from OAuth redirect
+    if (window.location.hash === '#' || window.location.hash.startsWith('#access_token') || window.location.hash.startsWith('#error')) {
+      try {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      } catch {
+        // ignore
+      }
+    }
+
     async function restoreSession() {
       // 1. Check Flask JWT local token first
       const token = getStoredToken();
@@ -119,6 +128,14 @@ export const AuthProvider = ({ children }) => {
             } catch (syncErr) {
               console.error('OAuth backend sync failed:', syncErr);
             }
+
+            // Fallback: If backend sync is offline or unreachable, retain Supabase user session
+            if (mounted) {
+              storeTokens(session.access_token, session.refresh_token);
+              setUser(buildUser(session.user));
+              setLoading(false);
+              return;
+            }
           }
         } catch (err) {
           console.error('Supabase session check error:', err);
@@ -143,10 +160,14 @@ export const AuthProvider = ({ children }) => {
             if (ok && syncData?.access_token) {
               storeTokens(syncData.access_token, syncData.refresh_token);
               setUser(buildUser(syncData.user || session.user));
+              return;
             }
           } catch (syncErr) {
             console.error('OAuth authStateChange sync failed:', syncErr);
           }
+          // Fallback to Supabase user session directly
+          storeTokens(session.access_token, session.refresh_token);
+          setUser(buildUser(session.user));
         } else if (event === 'SIGNED_OUT') {
           clearTokens();
           setUser(null);

@@ -1,7 +1,6 @@
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  Shield,
   LayoutDashboard,
   Radar,
   FileText,
@@ -14,6 +13,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { Badge } from '../ui/Badge';
+import { BrandLogo } from '../branding/BrandLogo';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../ui/Toast';
 
@@ -24,7 +24,7 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
 
   const navItems = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { label: 'Cloud Scanner', path: '/scanner', icon: Radar, badge: 'LIVE' },
+    { label: 'Scanner', path: '/scanner', icon: Radar, badge: 'LIVE' },
     { label: 'Scan History', path: '/history', icon: History },
     { label: 'Scan Comparison', path: '/compare', icon: GitCompare, badge: 'NEW' },
     { label: 'Profile', path: '/profile', icon: User },
@@ -56,7 +56,7 @@ export const Sidebar = ({ collapsed, setCollapsed }) => {
       <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800/80 bg-slate-950/40">
         <div className="flex items-center gap-3 overflow-hidden">
           <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 shrink-0 shadow-[0_0_15px_rgba(0,243,255,0.2)]">
-            <Shield className="w-6 h-6" />
+            <BrandLogo className="w-6 h-6" />
           </div>
           {!collapsed && (
             <div className="flex flex-col">

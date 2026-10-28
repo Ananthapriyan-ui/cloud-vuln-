@@ -1,7 +1,18 @@
 import io
 import datetime
 import html as html_module
+import base64
+from pathlib import Path
 from typing import Dict, Any, List
+
+_BRAND_LOGO_PATH = Path(__file__).resolve().parents[1] / "public" / "assets" / "cloudvuln-logo.png"
+
+def _brand_logo_data_uri() -> str:
+    try:
+        encoded_logo = base64.b64encode(_BRAND_LOGO_PATH.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{encoded_logo}"
+    except OSError:
+        return ""
 
 def _esc(val) -> str:
     if val is None:
@@ -303,6 +314,127 @@ def _build_ports_section(ports_data: Dict) -> str:
         f'<tbody>{rows}</tbody></table></div>'
     )
 
+
+def _build_dns_section(dns_data: Dict) -> str:
+    if not dns_data:
+        return ""
+    domain = _esc(dns_data.get("domain", ""))
+    findings = dns_data.get("findings", [])
+    rows = ""
+    for f in findings:
+        check = _esc(f.get("check"))
+        status = _esc(f.get("status"))
+        sev = _esc(f.get("severity", "Info"))
+        desc = _esc(f.get("description", ""))
+        rec = _esc(f.get("recommendation") or "—")
+        sstyle = _status_badge_style(status)
+        sevstyle = _severity_badge_style(sev)
+        rows += (
+            f'<tr>'
+            f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#00f3ff;border-bottom:1px solid #1e293b;">{check}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;"><span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;{sstyle}">{status}</span></td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;"><span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;{sevstyle}">{sev}</span></td>'
+            f'<td style="padding:8px 12px;color:#e2e8f0;font-size:12px;border-bottom:1px solid #1e293b;">{desc}</td>'
+            f'<td style="padding:8px 12px;color:#94a3b8;font-size:12px;border-bottom:1px solid #1e293b;">{rec}</td>'
+            f'</tr>'
+        )
+    th = '<th style="padding:10px 12px;text-align:left;color:#94a3b8;font-family:monospace;font-size:11px;text-transform:uppercase;border-bottom:1px solid #1e293b;">'
+    return (
+        f'<div class="section-title">&#128225; DNS Security Assessment &amp; Authentication Records ({domain})</div>'
+        '<div style="overflow-x:auto;margin-bottom:24px;"><table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr style="background:#161f33;">{th}Check / Record</th>{th}Status</th>{th}Severity</th>{th}Verification Details</th>{th}Recommendation</th></tr></thead>'
+        f'<tbody>{rows}</tbody></table></div>'
+    )
+
+
+def _build_dependencies_section(dep_data: Dict) -> str:
+    if not dep_data:
+        return ""
+    packages = dep_data.get("packages", [])
+    total_pkgs = dep_data.get("total_packages_scanned", len(packages))
+    total_vulns = dep_data.get("total_vulnerabilities_found", 0)
+    rows = ""
+    for p in packages:
+        pname = _esc(p.get("package"))
+        pver = _esc(p.get("version") or "Latest / Unspecified")
+        eco = _esc(p.get("ecosystem", "npm"))
+        vulns = p.get("vulnerabilities", [])
+        v_count = len(vulns)
+        status_text = f"{v_count} CVE(s)" if v_count > 0 else "Clean"
+        sstyle = "background:rgba(239,68,68,0.2);color:#f87171;border:1px solid #ef4444;" if v_count > 0 else "background:rgba(16,185,129,0.2);color:#34d399;border:1px solid #10b981;"
+        
+        cve_list_html = ""
+        for v in vulns:
+            cve_id = _esc(v.get("cve_id"))
+            sev = _esc(v.get("severity", "Medium"))
+            cvss = _val(v.get("cvss_score"), "N/A")
+            desc = _esc(v.get("description", ""))
+            ref = v.get("reference_url")
+            link = f' <a href="{html_module.escape(ref)}" style="color:#38bdf8;">[NVD]</a>' if ref else ""
+            cve_list_html += f'<div style="margin-top:4px;padding:4px 8px;background:#090d1e;border-radius:6px;font-size:11px;"><strong style="color:#f87171;">{cve_id}</strong> ({sev}, CVSS {cvss}): {desc[:150]}...{link}</div>'
+        
+        rows += (
+            f'<tr>'
+            f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;font-weight:bold;color:#00f3ff;border-bottom:1px solid #1e293b;">{pname}</td>'
+            f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{pver}</td>'
+            f'<td style="padding:8px 12px;font-size:12px;color:#94a3b8;border-bottom:1px solid #1e293b;">{eco}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;"><span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;{sstyle}">{status_text}</span></td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;">{cve_list_html if cve_list_html else "<span style=\'color:#34d399;font-size:11px;\'>No Known Vulnerabilities</span>"}</td>'
+            f'</tr>'
+        )
+    th = '<th style="padding:10px 12px;text-align:left;color:#94a3b8;font-family:monospace;font-size:11px;text-transform:uppercase;border-bottom:1px solid #1e293b;">'
+    return (
+        f'<div class="section-title">&#128230; Dependency Vulnerability Audit ({total_pkgs} Packages, {total_vulns} CVEs Found)</div>'
+        '<div style="overflow-x:auto;margin-bottom:24px;"><table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr style="background:#161f33;">{th}Package</th>{th}Version</th>{th}Ecosystem</th>{th}Status</th>{th}Identified CVEs (NVD v2.0)</th></tr></thead>'
+        f'<tbody>{rows}</tbody></table></div>'
+    )
+
+
+def _build_cookies_section(cookie_data: Dict) -> str:
+    if not cookie_data:
+        return ""
+    cookies = cookie_data.get("cookies", [])
+    total_cookies = cookie_data.get("total_cookies", len(cookies))
+    rows = ""
+    for c in cookies:
+        cname = _esc(c.get("name"))
+        sec = c.get("secure", False)
+        http_only = c.get("httponly", False)
+        samesite = _esc(c.get("samesite", "Not Set"))
+        path = _esc(c.get("path", "/"))
+        domain = _esc(c.get("domain", "Host"))
+        sev = _esc(c.get("severity", "Low"))
+        issues = c.get("issues", [])
+        sec_badge = '<span style="color:#34d399;font-weight:bold;">&#10004; Secure</span>' if sec else '<span style="color:#f87171;font-weight:bold;">&#10008; Missing</span>'
+        http_badge = '<span style="color:#34d399;font-weight:bold;">&#10004; HttpOnly</span>' if http_only else '<span style="color:#f87171;font-weight:bold;">&#10008; Missing</span>'
+        sevstyle = _severity_badge_style(sev)
+        def _get_issue_desc(i):
+            if isinstance(i, dict):
+                return i.get("description") or i.get("attribute") or str(i)
+            return str(i)
+        issue_text = "<br>".join(f'<span style="color:#fb923c;">&bull; {_esc(_get_issue_desc(iss))}</span>' for iss in issues) if issues else '<span style="color:#34d399;">Properly Protected</span>'
+        rows += (
+            f'<tr>'
+            f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;font-weight:bold;color:#00f3ff;border-bottom:1px solid #1e293b;">{cname}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;">{sec_badge}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;">{http_badge}</td>'
+            f'<td style="padding:8px 12px;font-family:monospace;font-size:12px;color:#e2e8f0;border-bottom:1px solid #1e293b;">{samesite}</td>'
+            f'<td style="padding:8px 12px;font-size:11px;color:#94a3b8;border-bottom:1px solid #1e293b;">{domain}{path}</td>'
+            f'<td style="padding:8px 12px;border-bottom:1px solid #1e293b;"><span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:700;{sevstyle}">{sev}</span></td>'
+            f'<td style="padding:8px 12px;font-size:11px;border-bottom:1px solid #1e293b;">{issue_text}</td>'
+            f'</tr>'
+        )
+    if not rows:
+        rows = '<tr><td colspan="7" style="padding:16px;text-align:center;color:#94a3b8;">No Set-Cookie headers detected on target endpoint.</td></tr>'
+    th = '<th style="padding:10px 12px;text-align:left;color:#94a3b8;font-family:monospace;font-size:11px;text-transform:uppercase;border-bottom:1px solid #1e293b;">'
+    return (
+        f'<div class="section-title">&#127850; HTTP Cookie Security Directives ({total_cookies} Cookies Audited)</div>'
+        '<div style="overflow-x:auto;margin-bottom:24px;"><table style="width:100%;border-collapse:collapse;">'
+        f'<thead><tr style="background:#161f33;">{th}Cookie Name</th>{th}Secure</th>{th}HttpOnly</th>{th}SameSite</th>{th}Scope (Domain / Path)</th>{th}Risk</th>{th}Issues Identified</th></tr></thead>'
+        f'<tbody>{rows}</tbody></table></div>'
+    )
+
 CSS = """
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -331,7 +463,7 @@ body {
     gap: 20px;
     flex-wrap: wrap;
 }
-.brand-logo { font-size: 28px; font-weight: 900; color: #00f3ff; letter-spacing: -1px; text-shadow: 0 0 20px rgba(0,243,255,0.4); }
+.brand-logo { display: block; width: 56px; height: 44px; object-fit: contain; margin-bottom: 8px; }
 .brand-sub { font-size: 12px; color: #64748b; font-family: monospace; margin-top: 4px; letter-spacing: 1px; }
 .report-id-block { text-align: right; }
 .report-id { font-family: monospace; font-size: 13px; color: #94a3b8; }
@@ -355,6 +487,7 @@ a { color: #38bdf8; }
 """
 
 def generate_html_report(scan_data: Dict[str, Any]) -> str:
+    brand_logo = _brand_logo_data_uri()
     scan_ref = _esc(scan_data.get("scan_ref") or "Unknown")
     target = _esc(scan_data.get("target") or "Unknown")
     provider = _esc(scan_data.get("provider") or scan_data.get("cloud_provider") or "Not Available")
@@ -387,6 +520,10 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
     cve_findings: List[Dict] = parsed.get("cve_findings") or []
     recommendations: List[str] = parsed.get("recommendations") or []
 
+    dns_data = parsed if (parsed.get("scan_type") == "DNS Security Checker" or "records_summary" in parsed) else parsed.get("dns_summary", {})
+    dep_data = parsed if (parsed.get("scan_type") == "Dependency Vulnerability Scanner" or "packages" in parsed) else parsed.get("dependency_summary", {})
+    cookie_data = parsed if (parsed.get("scan_type") == "Cookie Security Checker" or "cookies" in parsed) else parsed.get("cookie_summary", {})
+
     whois_html = _build_whois_section(whois) if whois else ""
     ssl_html = _build_ssl_section(ssl_data) if ssl_data else ""
     headers_html = _build_headers_section(headers) if headers else ""
@@ -394,6 +531,9 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
     owasp_summary_html = _build_owasp_section(owasp) if owasp else ""
     owasp_detail_html = _build_owasp_detail_section(owasp) if owasp else ""
     cve_html = _build_cve_section(cve_findings) if cve_findings else ""
+    dns_html = _build_dns_section(dns_data) if dns_data else ""
+    dep_html = _build_dependencies_section(dep_data) if dep_data else ""
+    cookie_html = _build_cookies_section(cookie_data) if cookie_data else ""
     recs_html = _build_recommendations_section(recommendations) if recommendations else ""
 
     risk_color = _risk_color(risk_score_raw)
@@ -422,7 +562,7 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
 <div class="container">
 <div class="report-header">
   <div>
-    <div class="brand-logo">&#9729; CloudVuln</div>
+    <img class="brand-logo" src="{brand_logo}" alt="CloudVuln cloud, shield, and padlock logo">
     <div class="brand-sub">SECURITY ASSESSMENT REPORT</div>
   </div>
   <div class="report-id-block">
@@ -456,6 +596,9 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
 {ssl_html}
 {headers_html}
 {ports_html}
+{dns_html}
+{dep_html}
+{cookie_html}
 {owasp_summary_html}
 {owasp_detail_html}
 {cve_html}
@@ -480,6 +623,9 @@ def generate_csv_report(scan_data: Dict[str, Any]) -> str:
     headers_info = parsed.get("headers_summary") or {}
     ssl_info = parsed.get("ssl_summary") or {}
     ports_info = parsed.get("ports_summary") or {}
+    dns_info = parsed if (parsed.get("scan_type") == "DNS Security Checker" or "records_summary" in parsed) else parsed.get("dns_summary", {})
+    dep_info = parsed if (parsed.get("scan_type") == "Dependency Vulnerability Scanner" or "packages" in parsed) else parsed.get("dependency_summary", {})
+    cookie_info = parsed if (parsed.get("scan_type") == "Cookie Security Checker" or "cookies" in parsed) else parsed.get("cookie_summary", {})
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["CloudVuln Security Assessment Report"])
@@ -497,6 +643,37 @@ def generate_csv_report(scan_data: Dict[str, Any]) -> str:
     writer.writerow(["Low Count", scan_data.get("low_count", 0)])
     writer.writerow(["Execution Date", scan_data.get("created_at", scan_data.get("executed_at", ""))])
     writer.writerow([])
+
+    # DNS Security Checker
+    if dns_info.get("findings"):
+        writer.writerow(["DNS Security Findings"])
+        writer.writerow(["Check", "Status", "Severity", "Description", "Recommendation"])
+        for f in dns_info["findings"]:
+            writer.writerow([f.get("check",""), f.get("status",""), f.get("severity",""), f.get("description",""), f.get("recommendation","")])
+        writer.writerow([])
+
+    # Dependency Vulnerabilities
+    if dep_info.get("packages"):
+        writer.writerow(["Dependency Vulnerability Audit"])
+        writer.writerow(["Package", "Version", "Ecosystem", "CVEs Count", "CVE IDs", "Max Severity"])
+        for p in dep_info["packages"]:
+            vulns = p.get("vulnerabilities", [])
+            cve_ids = ", ".join(v.get("cve_id","") for v in vulns)
+            writer.writerow([p.get("package",""), p.get("version",""), p.get("ecosystem",""), len(vulns), cve_ids])
+        writer.writerow([])
+
+    # Cookie Security Checker
+    if cookie_info.get("cookies"):
+        writer.writerow(["Cookie Security Directives"])
+        writer.writerow(["Cookie Name", "Secure", "HttpOnly", "SameSite", "Path", "Domain", "Severity", "Issues"])
+        for c in cookie_info["cookies"]:
+            def _get_issue_str(i):
+                if isinstance(i, dict):
+                    return i.get("description") or i.get("attribute") or str(i)
+                return str(i)
+            issues_str = "; ".join(_get_issue_str(iss) for iss in c.get("issues", []))
+            writer.writerow([c.get("name",""), "Yes" if c.get("secure") else "No", "Yes" if c.get("httponly") else "No", c.get("samesite",""), c.get("path",""), c.get("domain",""), c.get("severity",""), issues_str])
+        writer.writerow([])
 
     # HTTP Security Headers
     if headers_info.get("checks"):
@@ -543,6 +720,7 @@ def generate_csv_report(scan_data: Dict[str, Any]) -> str:
 
 def generate_comparison_html_report(comparison: Dict[str, Any]) -> str:
     """Generate professional HTML comparison report between two real scans."""
+    brand_logo = _brand_logo_data_uri()
     prev = comparison.get("previous_scan", {})
     latest = comparison.get("latest_scan", {})
     summary = comparison.get("summary", {})
@@ -741,7 +919,7 @@ def generate_comparison_html_report(comparison: Dict[str, Any]) -> str:
 <div class="container">
 <div class="report-header">
   <div>
-    <div class="brand-logo">&#9729; CloudVuln</div>
+    <img class="brand-logo" src="{brand_logo}" alt="CloudVuln cloud, shield, and padlock logo">
     <div class="brand-sub">SCAN COMPARISON &amp; SECURITY TREND REPORT</div>
   </div>
   <div class="report-id-block">

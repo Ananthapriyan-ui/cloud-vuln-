@@ -1,3 +1,4 @@
+import importlib
 import os
 import sys
 
@@ -10,10 +11,10 @@ for d in (backend_dir, root_dir):
         sys.path.insert(0, d)
 
 try:
-    from backend.main import app
+    _main_module = importlib.import_module("backend.main")
 except ImportError:
-    from main import app
+    _main_module = importlib.import_module("main")
 
 # Export for both ASGI (app) and serverless function handlers
-app = app
+app = getattr(_main_module, "app")
 handler = app

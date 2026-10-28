@@ -451,12 +451,12 @@ def get_dashboard_summary(
         func.count(func.distinct(models.Scan.target)),
     ).filter(models.Scan.user_id == current_user.id).first()
 
-    total_scans = int(row[0] or 0) if row else 0
+    total_scans = (row[0] or 0) if row else 0
     critical_vulns = int(row[1] or 0) if row else 0
     high_vulns = int(row[2] or 0) if row else 0
     medium_vulns = int(row[3] or 0) if row else 0
     low_vulns = int(row[4] or 0) if row else 0
-    monitored_assets_raw = int(row[5] or 0) if row else 0
+    monitored_assets_raw = (row[5] or 0) if row else 0
     monitored_assets = monitored_assets_raw if monitored_assets_raw else (1 if total_scans > 0 else 0)
 
     active_scans = db.query(models.Scan).filter(
@@ -646,6 +646,76 @@ def analyze_ssl_endpoint(
     current_user: models.User = Depends(security.get_current_user),
 ):
     return analyzer.analyze_ssl(req.target_url)
+
+
+# ──────────────────────────────────────────────
+# NEW Scanner Modules (DNS, Dependency, Cookie)
+# ──────────────────────────────────────────────
+
+import scanners  # DNS, Dependency, Cookie scanner implementations
+
+
+@app.post("/api/analysis/dns")
+def analyze_dns_endpoint(
+    req: schemas.DNSScanRequest,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
+    """DNS Security Checker — real DNS queries for A, AAAA, MX, NS, TXT, CAA, DNSSEC, SPF, DMARC, DKIM."""
+    result = scanners.analyze_dns_security(req.domain, dkim_selector=req.dkim_selector)
+
+    if not result.get("error"):
+        db.add(models.ActivityLog(
+            text=f"DNS Security scan for {result.get('domain', req.domain)} (Score: {result.get('security_score', 0)}/100)",
+            type="info" if result.get("risk_level") in ("Low",) else "warning",
+            time_ago="Just now",
+            user_id=current_user.id,
+        ))
+        db.commit()
+
+    return result
+
+
+@app.post("/api/analysis/dependencies")
+def analyze_dependencies_endpoint(
+    req: schemas.DependencyScanRequest,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
+    """Dependency Vulnerability Scanner — queries NVD for real CVEs in user-supplied packages."""
+    result = scanners.analyze_dependencies(req.package_list, ecosystem=req.ecosystem or "npm")
+
+    if not result.get("error"):
+        db.add(models.ActivityLog(
+            text=f"Dependency scan: {result.get('total_packages_scanned', 0)} packages, {result.get('total_vulnerabilities_found', 0)} CVEs (Score: {result.get('security_score', 0)}/100)",
+            type="info" if result.get("risk_level") in ("Low",) else "warning",
+            time_ago="Just now",
+            user_id=current_user.id,
+        ))
+        db.commit()
+
+    return result
+
+
+@app.post("/api/analysis/cookies")
+def analyze_cookies_endpoint(
+    req: schemas.SecurityAnalysisRequest,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
+    """Cookie Security Checker — inspects real HTTP Set-Cookie headers for security attributes."""
+    result = scanners.analyze_cookies(req.target_url)
+
+    if not result.get("error"):
+        db.add(models.ActivityLog(
+            text=f"Cookie scan for {result.get('target', req.target_url)} ({result.get('total_cookies', 0)} cookies, Score: {result.get('security_score', 0)}/100)",
+            type="info" if result.get("risk_level") in ("Low",) else "warning",
+            time_ago="Just now",
+            user_id=current_user.id,
+        ))
+        db.commit()
+
+    return result
 
 
 # ──────────────────────────────────────────────

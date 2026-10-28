@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield } from 'lucide-react';
+import { BrandLogo } from '../components/branding/BrandLogo';
 import { Loader } from '../components/ui/Loader';
 
 export const LoadingScreen = ({ message = 'Initializing Cloud Security Engine...' }) => {
@@ -9,7 +9,7 @@ export const LoadingScreen = ({ message = 'Initializing Cloud Security Engine...
 
       <div className="relative z-10 flex flex-col items-center justify-center space-y-6 text-center">
         <div className="p-4 rounded-2xl bg-slate-900 border border-cyan-500/40 shadow-[0_0_30px_rgba(0,243,255,0.3)] text-cyan-400">
-          <Shield className="w-12 h-12 animate-cyber-pulse" />
+          <BrandLogo className="w-14 h-14 animate-cyber-pulse" />
         </div>
 
         <div>

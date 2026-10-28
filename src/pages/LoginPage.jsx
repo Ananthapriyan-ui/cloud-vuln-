@@ -1,10 +1,11 @@
 import React, { useState, useCallback } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
-import { Shield, Mail, Key, ArrowRight, ShieldCheck, Lock } from 'lucide-react';
+import { Mail, Key, ArrowRight, ShieldCheck, Lock } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card, CardContent } from '../components/ui/Card';
 import { GoogleIcon } from '../components/ui/GoogleIcon';
+import { BrandLogo } from '../components/branding/BrandLogo';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/ui/Toast';
 
@@ -85,7 +86,7 @@ export const LoginPage = () => {
         {/* Brand */}
         <div className="text-center space-y-3">
           <div className="inline-flex items-center justify-center p-3 rounded-2xl bg-slate-900 border border-cyan-500/40 shadow-[0_0_25px_rgba(0,243,255,0.25)] text-cyan-400">
-            <Shield className="w-10 h-10 animate-cyber-pulse" />
+            <BrandLogo className="w-12 h-12 animate-cyber-pulse" />
           </div>
           <div>
             <h1 className="text-2xl font-black tracking-wider text-slate-100">
