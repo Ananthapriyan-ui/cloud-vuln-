@@ -47,8 +47,8 @@ const MetricCard = memo(({ label, value, sub, color, icon: Icon, borderHover }) 
 
 // ── Build domain posture from real scan data ─────────────────────────
 const buildPostureData = (scans) => {
-  if (!scans || scans.length === 0) return null;
-  const completedScans = scans.filter(s => s.scan_data);
+  if (!Array.isArray(scans) || scans.length === 0) return null;
+  const completedScans = scans.filter(s => s && s.scan_data);
   if (completedScans.length === 0) return null;
   const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
   const parseData = (s) => {
@@ -105,15 +105,15 @@ export const DashboardPage = () => {
     if (!silent) setLoading(true);
     try {
       const [sumData, statsData, scansData, actData] = await Promise.all([
-        api.dashboardSummary(),
-        api.riskStatistics(),
-        api.recentScans(),
-        api.activity(),
+        api.dashboardSummary().catch(() => null),
+        api.riskStatistics().catch(() => null),
+        api.recentScans().catch(() => []),
+        api.activity().catch(() => []),
       ]);
-      setSummary(sumData || EMPTY_SUMMARY);
-      setRiskStats(statsData || EMPTY_STATS);
-      setRecentScans(scansData || []);
-      setActivityLogs(actData || []);
+      setSummary(sumData && typeof sumData === 'object' && !sumData.error ? sumData : EMPTY_SUMMARY);
+      setRiskStats(statsData && Array.isArray(statsData?.severity_breakdown) ? statsData : EMPTY_STATS);
+      setRecentScans(Array.isArray(scansData) ? scansData : []);
+      setActivityLogs(Array.isArray(actData) ? actData : []);
     } catch (e) {
       console.error("Dashboard loading error", e);
       setSummary(EMPTY_SUMMARY);
@@ -130,7 +130,10 @@ export const DashboardPage = () => {
     try {
       const data = await api.searchCve(query || 'Cloud');
       if (Array.isArray(data) && data.length > 0) setCveFeed(data);
-    } catch { /* ignore */ }
+      else setCveFeed([]);
+    } catch { 
+      setCveFeed([]);
+    }
     finally { setCveLoading(false); }
   }, []);
 
@@ -139,16 +142,18 @@ export const DashboardPage = () => {
     fetchCveFeed('Cloud');
   }, [fetchDashboardData, fetchCveFeed]);
 
-  const totalVulns = riskStats?.severity_breakdown?.reduce((a, c) => a + c.value, 0) || 0;
+  const totalVulns = Array.isArray(riskStats?.severity_breakdown)
+    ? riskStats.severity_breakdown.reduce((a, c) => a + (c.value || 0), 0)
+    : 0;
   const postureData = buildPostureData(recentScans);
 
   if (loading) return <PageSkeleton />;
 
-  const recentReports = (recentScans || []).slice(0, 5).map(scan => ({
-    id: scan.scan_ref,
-    target: scan.target,
-    date: formatScanDate(scan.created_at),
-    risk: scan.risk_score
+  const recentReports = (Array.isArray(recentScans) ? recentScans : []).slice(0, 5).map(scan => ({
+    id: scan?.scan_ref || '',
+    target: scan?.target || 'Unknown',
+    date: formatScanDate(scan?.created_at),
+    risk: scan?.risk_score ?? 0
   }));
 
   return (

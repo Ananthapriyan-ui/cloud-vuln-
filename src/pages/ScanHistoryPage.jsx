@@ -32,7 +32,7 @@ export const ScanHistoryPage = () => {
         search: searchQuery,
         status_filter: statusFilter !== 'all' ? statusFilter : undefined
       });
-      setScans(data || []);
+      setScans(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('Failed to load scan history:', err);
       setScans([]);

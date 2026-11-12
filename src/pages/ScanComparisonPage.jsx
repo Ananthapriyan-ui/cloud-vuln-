@@ -51,12 +51,12 @@ export const ScanComparisonPage = () => {
     setLoadingOptions(true);
     try {
       const data = await api.getComparisonOptions();
-      setOptions(data || []);
+      setOptions(Array.isArray(data) ? data : []);
 
       const urlPrev = searchParams.get('prev');
       const urlLatest = searchParams.get('latest');
 
-      if (data && data.length >= 2) {
+      if (Array.isArray(data) && data.length >= 2) {
         // Auto-select based on URL params or newest two scans
         const prevTarget = urlPrev || data[1].scan_ref;
         const latestTarget = urlLatest || data[0].scan_ref;
