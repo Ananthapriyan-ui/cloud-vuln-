@@ -5,11 +5,9 @@
   "installCommand": "npm install",
   "functions": {
     "api/*.py": {
-      "runtime": "@vercel/python",
       "includeFiles": "backend/**"
     },
     "api/**/*.py": {
-      "runtime": "@vercel/python",
       "includeFiles": "backend/**"
     }
   },
