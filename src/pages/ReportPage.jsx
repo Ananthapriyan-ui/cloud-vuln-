@@ -78,9 +78,13 @@ export const ReportPage = () => {
   const portsSummary = reportData?.scan_data?.ports_summary || null;
   const headersSummary = reportData?.scan_data?.headers_summary || null;
   const whoisSummary = reportData?.scan_data?.whois_summary || null;
-  const owaspFindings = reportData?.scan_data?.owasp_summary?.findings || [];
+  const owaspFindings = Array.isArray(reportData?.scan_data?.owasp_summary?.findings)
+    ? reportData.scan_data.owasp_summary.findings
+    : [];
   const sslSummary = reportData?.scan_data?.ssl_summary || null;
-  const vulnerabilities = reportData?.scan_data?.cve_findings || [];
+  const vulnerabilities = Array.isArray(reportData?.scan_data?.cve_findings)
+    ? reportData.scan_data.cve_findings
+    : [];
 
   const handleCopy = (text, itemKey) => {
     if (!text) return;
@@ -277,7 +281,7 @@ export const ReportPage = () => {
           )}
 
           {/* HTTP Security Headers Breakdown */}
-          {headersSummary?.findings && headersSummary.findings.length > 0 && (
+          {Array.isArray(headersSummary?.findings) && headersSummary.findings.length > 0 && (
             <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-4">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <span className="font-mono text-xs font-bold text-cyan-400 flex items-center gap-1.5">
@@ -331,7 +335,7 @@ export const ReportPage = () => {
                 </Badge>
               </div>
 
-              {portsSummary.open_ports && portsSummary.open_ports.length > 0 ? (
+              {Array.isArray(portsSummary.open_ports) && portsSummary.open_ports.length > 0 ? (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
                     <thead className="text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800 bg-slate-900">

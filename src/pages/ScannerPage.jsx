@@ -736,7 +736,7 @@ export const ScannerPage = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/80 bg-slate-950/60 font-mono text-xs">
-                        {analysisResult.packages.map((pkg, idx) => (
+                        {(Array.isArray(analysisResult.packages) ? analysisResult.packages : []).map((pkg, idx) => (
                           <tr key={idx} className="hover:bg-slate-900/40">
                             <td className="p-3.5 font-bold text-cyan-400">{pkg.package}</td>
                             <td className="p-3.5 text-slate-200">{pkg.version || 'Unspecified'}</td>
@@ -777,7 +777,7 @@ export const ScannerPage = () => {
                       Live NIST NVD v2.0 CVE Findings
                     </h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {analysisResult.all_vulnerabilities.map((cve, i) => (
+                      {(Array.isArray(analysisResult.all_vulnerabilities) ? analysisResult.all_vulnerabilities : []).map((cve, i) => (
                         <div
                           key={i}
                           className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col justify-between space-y-3 hover:border-cyan-500/40 transition-all"
@@ -831,7 +831,7 @@ export const ScannerPage = () => {
           <CardContent className="space-y-6">
             {isAnalyzing ? (
               <Skeleton className="h-64 w-full" />
-            ) : analysisResult?.cookies ? (
+            ) : Array.isArray(analysisResult?.cookies) ? (
               <>
                 {/* Metric Summary Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -988,7 +988,7 @@ export const ScannerPage = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/80 bg-slate-950/60">
-                      {analysisResult.owasp_summary.findings.map((f, i) => (
+                      {(Array.isArray(analysisResult.owasp_summary.findings) ? analysisResult.owasp_summary.findings : []).map((f, i) => (
                         <tr
                           key={i}
                           className="hover:bg-slate-900/50 transition-colors cursor-pointer"
@@ -1110,7 +1110,7 @@ export const ScannerPage = () => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800 font-mono text-xs">
-                        {analysisResult.ports_summary.open_ports.map((p, idx) => (
+                        {(Array.isArray(analysisResult.ports_summary?.open_ports) ? analysisResult.ports_summary.open_ports : []).map((p, idx) => (
                           <tr key={idx} className="hover:bg-slate-900/40">
                             <td className="p-3 font-bold text-cyan-400">{p.port}</td>
                             <td className="p-3 text-slate-200">{p.service}</td>
@@ -1278,7 +1278,7 @@ export const ScannerPage = () => {
                   </div>
 
                   <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                    {analysisResult.headers_summary.checks.map((chk) => (
+                    {(Array.isArray(analysisResult.headers_summary.checks) ? analysisResult.headers_summary.checks : []).map((chk) => (
                       <div
                         key={chk.name}
                         className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 flex items-start justify-between gap-3 text-xs"

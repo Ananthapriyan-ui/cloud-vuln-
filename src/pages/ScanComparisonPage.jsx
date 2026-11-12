@@ -633,18 +633,18 @@ export const ScanComparisonPage = () => {
                     <CardHeader className="pb-3 border-b border-slate-800 flex flex-row items-center justify-between">
                       <CardTitle className="text-xs font-bold text-emerald-400 uppercase flex items-center gap-1.5">
                         <CheckCircle2 className="w-4 h-4" />
-                        <span>Fixed in Latest ({comparison.vulnerability_changes.fixed.length})</span>
+                        <span>Fixed in Latest ({(Array.isArray(comparison.vulnerability_changes?.fixed) ? comparison.vulnerability_changes.fixed : []).length})</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 space-y-2 max-h-96 overflow-y-auto">
-                      {comparison.vulnerability_changes.fixed.length === 0 ? (
+                      {!(Array.isArray(comparison.vulnerability_changes?.fixed) && comparison.vulnerability_changes.fixed.length > 0) ? (
                         <p className="text-xs text-slate-500 p-4 text-center">No vulnerabilities fixed.</p>
                       ) : (
                         comparison.vulnerability_changes.fixed.map((v, i) => (
                           <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1.5">
                             <div className="flex items-center justify-between">
                               <span className="font-mono text-emerald-400 font-bold">{v.cve_id || v.id}</span>
-                              <Badge variant={v.severity.toLowerCase()} size="sm">{v.severity}</Badge>
+                              <Badge variant={v.severity?.toLowerCase() || 'info'} size="sm">{v.severity || 'Info'}</Badge>
                             </div>
                             <p className="font-semibold text-slate-200">{v.title}</p>
                             <p className="text-[11px] text-slate-400 truncate">Component: {v.component}</p>
@@ -661,18 +661,18 @@ export const ScanComparisonPage = () => {
                     <CardHeader className="pb-3 border-b border-slate-800 flex flex-row items-center justify-between">
                       <CardTitle className="text-xs font-bold text-rose-400 uppercase flex items-center gap-1.5">
                         <XCircle className="w-4 h-4" />
-                        <span>New Findings ({comparison.vulnerability_changes.new.length})</span>
+                        <span>New Findings ({(Array.isArray(comparison.vulnerability_changes?.new) ? comparison.vulnerability_changes.new : []).length})</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 space-y-2 max-h-96 overflow-y-auto">
-                      {comparison.vulnerability_changes.new.length === 0 ? (
+                      {!(Array.isArray(comparison.vulnerability_changes?.new) && comparison.vulnerability_changes.new.length > 0) ? (
                         <p className="text-xs text-slate-500 p-4 text-center">No new vulnerabilities introduced.</p>
                       ) : (
                         comparison.vulnerability_changes.new.map((v, i) => (
                           <div key={i} className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs space-y-1.5">
                             <div className="flex items-center justify-between">
                               <span className="font-mono text-rose-400 font-bold">{v.cve_id || v.id}</span>
-                              <Badge variant={v.severity.toLowerCase()} size="sm">{v.severity}</Badge>
+                              <Badge variant={v.severity?.toLowerCase() || 'info'} size="sm">{v.severity || 'Info'}</Badge>
                             </div>
                             <p className="font-semibold text-slate-200">{v.title}</p>
                             <p className="text-[11px] text-slate-400 truncate">Component: {v.component}</p>
@@ -689,11 +689,11 @@ export const ScanComparisonPage = () => {
                     <CardHeader className="pb-3 border-b border-slate-800 flex flex-row items-center justify-between">
                       <CardTitle className="text-xs font-bold text-amber-400 uppercase flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4" />
-                        <span>Persistent Findings ({comparison.vulnerability_changes.persistent.length})</span>
+                        <span>Persistent Findings ({(Array.isArray(comparison.vulnerability_changes?.persistent) ? comparison.vulnerability_changes.persistent : []).length})</span>
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-3 space-y-2 max-h-96 overflow-y-auto">
-                      {comparison.vulnerability_changes.persistent.length === 0 ? (
+                      {!(Array.isArray(comparison.vulnerability_changes?.persistent) && comparison.vulnerability_changes.persistent.length > 0) ? (
                         <p className="text-xs text-slate-500 p-4 text-center">No persistent findings remaining.</p>
                       ) : (
                         comparison.vulnerability_changes.persistent.map((v, i) => (
@@ -730,7 +730,7 @@ export const ScanComparisonPage = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {comparison.owasp_comparison.map((ow) => (
+                    {(Array.isArray(comparison.owasp_comparison) ? comparison.owasp_comparison : []).map((ow) => (
                       <TableRow key={ow.owasp_id}>
                         <TableCell className="font-mono text-xs font-bold text-cyan-400">
                           {ow.owasp_id}
@@ -815,9 +815,9 @@ export const ScanComparisonPage = () => {
                     </TableHeader>
                     <TableBody>
                       {[
-                        ...comparison.cve_comparison.fixed_cves.map(c => ({ ...c, lifecycle: 'Fixed' })),
-                        ...comparison.cve_comparison.new_cves.map(c => ({ ...c, lifecycle: 'New' })),
-                        ...comparison.cve_comparison.persistent_cves.map(c => ({ ...c, lifecycle: 'Persistent' })),
+                        ...(Array.isArray(comparison.cve_comparison?.fixed_cves) ? comparison.cve_comparison.fixed_cves.map(c => ({ ...c, lifecycle: 'Fixed' })) : []),
+                        ...(Array.isArray(comparison.cve_comparison?.new_cves) ? comparison.cve_comparison.new_cves.map(c => ({ ...c, lifecycle: 'New' })) : []),
+                        ...(Array.isArray(comparison.cve_comparison?.persistent_cves) ? comparison.cve_comparison.persistent_cves.map(c => ({ ...c, lifecycle: 'Persistent' })) : []),
                       ].length === 0 ? (
                         <TableRow>
                           <TableCell colSpan={6} className="text-center py-8 text-slate-500">
@@ -826,9 +826,9 @@ export const ScanComparisonPage = () => {
                         </TableRow>
                       ) : (
                         [
-                          ...comparison.cve_comparison.fixed_cves.map(c => ({ ...c, lifecycle: 'Fixed' })),
-                          ...comparison.cve_comparison.new_cves.map(c => ({ ...c, lifecycle: 'New' })),
-                          ...comparison.cve_comparison.persistent_cves.map(c => ({ ...c, lifecycle: 'Persistent' })),
+                          ...(Array.isArray(comparison.cve_comparison?.fixed_cves) ? comparison.cve_comparison.fixed_cves.map(c => ({ ...c, lifecycle: 'Fixed' })) : []),
+                          ...(Array.isArray(comparison.cve_comparison?.new_cves) ? comparison.cve_comparison.new_cves.map(c => ({ ...c, lifecycle: 'New' })) : []),
+                          ...(Array.isArray(comparison.cve_comparison?.persistent_cves) ? comparison.cve_comparison.persistent_cves.map(c => ({ ...c, lifecycle: 'Persistent' })) : []),
                         ].map((cve) => (
                           <TableRow key={cve.cve_id}>
                             <TableCell className="font-mono text-xs font-bold text-cyan-400">
