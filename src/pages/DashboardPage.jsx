@@ -47,6 +47,7 @@ const MetricCard = memo(({ label, value, sub, color, icon: Icon, borderHover }) 
 
 // ── Build domain posture from real scan data ─────────────────────────
 const buildPostureData = (scans) => {
+  try {
   if (!Array.isArray(scans) || scans.length === 0) return null;
   const completedScans = scans.filter(s => s && s.scan_data);
   if (!Array.isArray(completedScans) || completedScans.length === 0) return null;
@@ -65,6 +66,10 @@ const buildPostureData = (scans) => {
     { subject: 'CVE Risk', score: avg(parsed.map(d => Math.max(0, 100 - (d?.critical_count || 0) * 20 - (d?.high_count || 0) * 10)).filter(v => v != null)), fullMark: 100 },
     { subject: 'Ports', score: avg(parsed.map(d => d?.ports_summary ? Math.max(0, 100 - (d.ports_summary.open_ports_count || 0) * 10) : 85).filter(v => v > 0)), fullMark: 100 },
   ];
+  } catch (err) {
+    console.warn('[CloudVuln] buildPostureData error:', err?.message);
+    return null;
+  }
 };
 
 const EMPTY_SUMMARY = {
@@ -345,7 +350,7 @@ export const DashboardPage = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {cveFeed.length === 0 ? (
+            {(!Array.isArray(cveFeed) || cveFeed.length === 0) ? (
               <p className="text-xs text-slate-500 text-center py-6">No CVE data loaded. Try a search.</p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -426,7 +431,7 @@ export const DashboardPage = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {recentScans.length === 0 ? (
+            {(!Array.isArray(recentScans) || recentScans.length === 0) ? (
               <p className="text-xs text-slate-500 text-center py-8 font-mono">No completed scans available.</p>
             ) : (
               <Table>
