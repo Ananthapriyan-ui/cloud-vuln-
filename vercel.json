@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "$comment": "CloudVuln – build ba86a14 – scanner modules_status fix + ErrorBoundary",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
