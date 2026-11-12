@@ -122,7 +122,7 @@ export const ScannerPage = () => {
       );
 
       setAnalysisResult(data);
-      setRunAllStatuses(data.scanner_statuses || {});
+      setRunAllStatuses(data.modules_status || data.scanner_statuses || {});
       if (data.scan_ref) {
         setLastScanRef(data.scan_ref);
       }
@@ -453,7 +453,7 @@ export const ScannerPage = () => {
       )}
 
       {/* Combined Scan Session Execution Progress & Status Grid */}
-      {(runAllStatuses || (analysisResult && analysisResult.scanner_statuses)) && (
+      {(runAllStatuses || (analysisResult && (analysisResult.modules_status || analysisResult.scanner_statuses))) && (
         <Card className="border-cyan-500/40 bg-slate-900/80 shadow-[0_0_25px_rgba(0,243,255,0.08)]">
           <CardHeader>
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 w-full">
@@ -504,10 +504,12 @@ export const ScannerPage = () => {
                 { key: 'owasp', label: 'OWASP Top 10', icon: ShieldAlert, color: 'text-orange-400', scanOpt: 'OWASP Top 10' },
                 { key: 'whois', label: 'WHOIS Lookup', icon: Globe, color: 'text-blue-400', scanOpt: 'WHOIS Lookup' },
               ].map((mod) => {
-                const statuses = runAllStatuses || analysisResult?.scanner_statuses || {};
-                const st = statuses[mod.key] || 'completed';
+                const statuses = runAllStatuses || analysisResult?.modules_status || analysisResult?.scanner_statuses || {};
+                const stRaw = statuses[mod.key];
+                // Backend sends {status: "Completed", ...} objects OR plain strings
+                const stStr = (typeof stRaw === 'object' && stRaw !== null) ? (stRaw.status || 'Completed') : (stRaw || 'completed');
+                const isFail = stStr.toLowerCase() === 'failed';
                 const Icon = mod.icon;
-                const isFail = st === 'failed';
                 return (
                   <button
                     key={mod.key}
