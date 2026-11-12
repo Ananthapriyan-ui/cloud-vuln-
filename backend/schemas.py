@@ -156,15 +156,22 @@ class ScanCreate(BaseModel):
     @field_validator("target")
     @classmethod
     def validate_target(cls, v: str) -> str:
-        return validate_public_url(v)
+        val = (v or "").strip()
+        if val.startswith("http://") or val.startswith("https://") or ("." in val and " " not in val and not any(val.lower().startswith(p) for p in ("npm", "pip", "pypi", "maven", "go", "ruby"))):
+            try:
+                return validate_public_url(val)
+            except Exception:
+                return val
+        return val[:500] if val else "Unknown Target"
 
     @field_validator("status")
     @classmethod
     def validate_status(cls, v: Optional[str]) -> str:
-        allowed = {"passed", "critical", "high", "medium", "running", "failed"}
-        if v and v not in allowed:
-            raise ValueError(f"Status must be one of: {', '.join(sorted(allowed))}")
-        return v or "passed"
+        allowed = {"passed", "critical", "high", "medium", "low", "running", "failed", "partial", "completed"}
+        val_lower = (v or "passed").lower()
+        if val_lower not in allowed:
+            return "passed"
+        return val_lower
 
     @field_validator("risk_score")
     @classmethod
@@ -493,7 +500,20 @@ class DependencyScanRequest(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("Package list cannot be empty. Enter one package per line.")
-        if len(v) > 5000:
-            raise ValueError("Package list too long. Maximum 5000 characters.")
+        if len(v) > 50000:
+            raise ValueError("Package list too long. Maximum 50,000 characters.")
         return v
+
+
+class RunAllScanRequest(BaseModel):
+    target_url: str
+    package_list: Optional[str] = None
+    ecosystem: Optional[str] = "npm"
+    dkim_selector: Optional[str] = None
+
+    @field_validator("target_url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        return validate_public_url(v)
+
 

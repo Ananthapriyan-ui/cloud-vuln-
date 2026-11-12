@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ShieldAlert,
@@ -26,7 +26,10 @@ import {
   Cookie,
   HelpCircle,
   Check,
-  FileCode
+  FileCode,
+  Upload,
+  Play,
+  Sparkles
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -34,10 +37,12 @@ import { Input } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
 import { Skeleton } from '../components/ui/Loader';
 import { useToast } from '../components/ui/Toast';
+import api from '../lib/api';
 
 export const ScannerPage = () => {
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const fileInputRef = useRef(null);
 
   const SCAN_OPTIONS = [
     { id: 'OWASP Top 10', label: 'OWASP Top 10:2025', desc: 'Defensive security assessment mapping findings against official OWASP Top 10:2025 categories.' },
@@ -59,6 +64,8 @@ export const ScannerPage = () => {
   const [cveSearchKeyword, setCveSearchKeyword] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSearchingCve, setIsSearchingCve] = useState(false);
+  const [isRunAllActive, setIsRunAllActive] = useState(false);
+  const [runAllStatuses, setRunAllStatuses] = useState(null);
 
   // Security Analysis Results State
   const [analysisResult, setAnalysisResult] = useState(null);
@@ -66,9 +73,73 @@ export const ScannerPage = () => {
   const [activeEvidenceModal, setActiveEvidenceModal] = useState(null);
   const [lastScanRef, setLastScanRef] = useState(null);
 
-  // Conduct Security Posture Analysis (Supports all scanners)
+  // File Upload for Dependency Scanner (package.json, package-lock.json, requirements.txt)
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target?.result;
+      if (typeof text === 'string') {
+        setPackageListInput(text);
+        if (file.name.endsWith('.json')) {
+          setEcosystemInput('npm');
+          addToast(`Loaded ${file.name} into manifest (Ecosystem: NPM)`, 'success');
+        } else if (file.name.includes('requirements') || file.name.endsWith('.txt')) {
+          setEcosystemInput('pypi');
+          addToast(`Loaded ${file.name} into manifest (Ecosystem: PyPI)`, 'success');
+        } else {
+          addToast(`Loaded file: ${file.name}`, 'info');
+        }
+      }
+    };
+    reader.onerror = () => {
+      addToast('Failed to read dependency file', 'error');
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // Run All Scans Feature: Executes all 3 new scanners + 5 existing perimeter scanners
+  const handleRunAllScans = async () => {
+    let domainTarget = targetUrl.trim();
+    if (!domainTarget) {
+      domainTarget = 'example.com';
+      setTargetUrl('example.com');
+    }
+
+    setIsAnalyzing(true);
+    setIsRunAllActive(true);
+    addToast(`Executing Run All Scans across all 8 security scanners for '${domainTarget}'...`, 'info');
+
+    try {
+      const data = await api.runAllScans(
+        domainTarget,
+        packageListInput,
+        ecosystemInput,
+        dkimSelector.trim() || undefined
+      );
+
+      setAnalysisResult(data);
+      setRunAllStatuses(data.scanner_statuses || {});
+      if (data.scan_ref) {
+        setLastScanRef(data.scan_ref);
+      }
+      addToast(`Run All Scans completed! Security score: ${data.security_score ?? 100}/100`, 'success');
+    } catch (err) {
+      console.error('Run All Scans failed', err);
+      addToast(err.message || 'Run All Scans failed to complete.', 'error');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // Conduct Individual Security Posture Analysis (Supports all scanners independently)
   const handleAnalyzeTarget = async (e) => {
     if (e) e.preventDefault();
+    setIsRunAllActive(false);
+    setRunAllStatuses(null);
 
     let endpoint = '/api/analysis/target';
     let requestBody = {};
@@ -130,6 +201,10 @@ export const ScannerPage = () => {
         const data = await response.json();
         setAnalysisResult(data);
 
+        if (data.scan_ref) {
+          setLastScanRef(data.scan_ref);
+        }
+
         if (selectedScanType === 'Dependency Scanner') {
           setCveResults(data.all_vulnerabilities || []);
         } else if (data.cve_findings) {
@@ -138,36 +213,38 @@ export const ScannerPage = () => {
 
         addToast(`${selectedScanType} completed successfully!`, 'success');
 
-        // Persist scan in DB
-        try {
-          const scanRes = await fetch('/api/scans', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({
-              target: data.target || data.domain || targetIdentifier,
-              provider: selectedScanType === 'Dependency Scanner' ? 'Software Supply Chain' : 'Perimeter / Endpoint',
-              scan_type: selectedScanType,
-              status: (data.risk_level || 'Low') === 'Low' ? 'passed' : (data.risk_level || 'Low').toLowerCase(),
-              critical_count: data.critical_count || 0,
-              high_count: data.high_count || 0,
-              medium_count: data.medium_count || 0,
-              low_count: data.low_count || 0,
-              risk_score: parseFloat(((100 - (data.security_score ?? 100)) / 10).toFixed(1)),
-              duration: data.duration || '1m 20s',
-              scan_data: JSON.stringify(data)
-            })
-          });
-          if (scanRes.ok) {
-            const savedScan = await scanRes.json();
-            if (savedScan && savedScan.scan_ref) {
-              setLastScanRef(savedScan.scan_ref);
+        // If backend didn't auto-save (e.g. standard /api/analysis/target), auto-save now
+        if (!data.scan_ref) {
+          try {
+            const scanRes = await fetch('/api/scans', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify({
+                target: data.target || data.domain || targetIdentifier,
+                provider: selectedScanType === 'Dependency Scanner' ? 'Software Supply Chain' : 'Perimeter / Endpoint',
+                scan_type: selectedScanType,
+                status: (data.risk_level || 'Low') === 'Low' ? 'passed' : (data.risk_level || 'Low').toLowerCase(),
+                critical_count: data.critical_count || 0,
+                high_count: data.high_count || 0,
+                medium_count: data.medium_count || 0,
+                low_count: data.low_count || 0,
+                risk_score: parseFloat(((100 - (data.security_score ?? 100)) / 10).toFixed(1)),
+                duration: data.duration || '1m 20s',
+                scan_data: JSON.stringify(data)
+              })
+            });
+            if (scanRes.ok) {
+              const savedScan = await scanRes.json();
+              if (savedScan && savedScan.scan_ref) {
+                setLastScanRef(savedScan.scan_ref);
+              }
             }
+          } catch (e) {
+            console.warn('Failed to auto-save scan record', e);
           }
-        } catch (e) {
-          console.warn('Failed to auto-save scan record', e);
         }
       } else {
         const errJson = await response.json().catch(() => ({}));
@@ -220,63 +297,86 @@ export const ScannerPage = () => {
           </p>
         </div>
 
-        {/* Input Bar for URL / Domain Scanners */}
-        {selectedScanType !== 'Dependency Scanner' ? (
-          <form onSubmit={handleAnalyzeTarget} className="flex flex-wrap items-center gap-2 w-full md:w-auto">
-            <Input
-              placeholder={
-                selectedScanType === 'DNS Security Checker'
-                  ? 'Domain (e.g. google.com)...'
-                  : selectedScanType === 'Cookie Security Checker'
-                  ? 'URL (e.g. https://example.com)...'
-                  : 'Target domain or URL (e.g. example.com)...'
-              }
-              icon={Globe}
-              value={targetUrl}
-              onChange={(e) => setTargetUrl(e.target.value)}
-              disabled={isAnalyzing}
-              className="w-full sm:w-64 md:w-72"
-            />
-
-            {selectedScanType === 'DNS Security Checker' && (
+        {/* Input Bar & Actions */}
+        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+          {selectedScanType !== 'Dependency Scanner' ? (
+            <form onSubmit={handleAnalyzeTarget} className="flex flex-wrap items-center gap-2 w-full md:w-auto">
               <Input
-                placeholder="DKIM selector (optional)..."
-                value={dkimSelector}
-                onChange={(e) => setDkimSelector(e.target.value)}
+                placeholder={
+                  selectedScanType === 'DNS Security Checker'
+                    ? 'Domain (e.g. google.com)...'
+                    : selectedScanType === 'Cookie Security Checker'
+                    ? 'URL (e.g. https://example.com)...'
+                    : 'Target domain or URL (e.g. example.com)...'
+                }
+                icon={Globe}
+                value={targetUrl}
+                onChange={(e) => setTargetUrl(e.target.value)}
                 disabled={isAnalyzing}
-                className="w-full sm:w-36 text-xs font-mono"
-                title="Leave empty to auto-detect standard selectors (google, default, k1, selector1)"
+                className="w-full sm:w-64 md:w-72"
               />
-            )}
 
+              {selectedScanType === 'DNS Security Checker' && (
+                <Input
+                  placeholder="DKIM selector (optional)..."
+                  value={dkimSelector}
+                  onChange={(e) => setDkimSelector(e.target.value)}
+                  disabled={isAnalyzing}
+                  className="w-full sm:w-36 text-xs font-mono"
+                  title="Leave empty to auto-detect standard selectors (google, default, k1, selector1)"
+                />
+              )}
+
+              <Button
+                type="submit"
+                variant="primary"
+                icon={RefreshCw}
+                disabled={isAnalyzing}
+                className="shrink-0"
+              >
+                {isAnalyzing && !isRunAllActive ? 'Scanning...' : 'Run Scan'}
+              </Button>
+            </form>
+          ) : (
             <Button
-              type="submit"
+              onClick={handleAnalyzeTarget}
               variant="primary"
               icon={RefreshCw}
               disabled={isAnalyzing}
               className="shrink-0"
             >
-              {isAnalyzing ? 'Scanning...' : 'Run Scan'}
+              {isAnalyzing && !isRunAllActive ? 'Auditing Packages...' : 'Run Dependency Scan'}
             </Button>
-          </form>
-        ) : (
+          )}
+
+          {/* Unified Run All Scans Action */}
           <Button
-            onClick={handleAnalyzeTarget}
-            variant="primary"
-            icon={RefreshCw}
+            type="button"
+            onClick={handleRunAllScans}
+            variant="outline"
+            icon={Play}
             disabled={isAnalyzing}
-            className="shrink-0"
+            className="shrink-0 bg-cyan-500/10 border-cyan-400 text-cyan-300 hover:bg-cyan-500/20 shadow-[0_0_20px_rgba(0,243,255,0.2)] font-bold"
           >
-            {isAnalyzing ? 'Auditing Packages...' : 'Run Dependency Scan'}
+            {isAnalyzing && isRunAllActive ? 'Running All Scans...' : 'Run All Scans'}
           </Button>
-        )}
+        </div>
       </div>
+
+      {/* Hidden file input for manifest upload */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept=".json,.txt"
+        style={{ display: 'none' }}
+      />
 
       {/* Dependency Input Card (Only shown when Dependency Scanner is active) */}
       {selectedScanType === 'Dependency Scanner' && (
         <Card className="border-cyan-500/30 bg-slate-900/60">
           <CardHeader>
-            <CardTitle icon={Package} subtitle="Supply Chain Security: Paste package manifest or individual packages to audit against NIST NVD v2.0">
+            <CardTitle icon={Package} subtitle="Supply Chain Security: Upload or paste package manifests (package.json, package-lock.json, requirements.txt) to audit against live OSV & NIST NVD CVE records">
               Dependency Manifest &amp; Package Input
             </CardTitle>
           </CardHeader>
@@ -290,8 +390,8 @@ export const ScannerPage = () => {
                   disabled={isAnalyzing}
                   className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-400"
                 >
-                  <option value="npm">npm (Node.js / JavaScript)</option>
-                  <option value="pypi">PyPI (Python pip / requirements.txt)</option>
+                  <option value="npm">npm (Node.js / package.json / package-lock.json)</option>
+                  <option value="pypi">PyPI (Python / requirements.txt)</option>
                   <option value="maven">Maven (Java)</option>
                   <option value="golang">Go (Go Modules)</option>
                   <option value="rubygems">RubyGems (Ruby)</option>
@@ -301,11 +401,19 @@ export const ScannerPage = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-xs font-mono text-cyan-300 border border-cyan-500/40 transition-all flex items-center gap-1.5 font-bold"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Upload File (.json / .txt)
+                </button>
+                <button
+                  type="button"
                   onClick={() => {
                     setEcosystemInput('npm');
                     setPackageListInput('lodash@4.17.20\naxios@0.21.1\nexpress@4.16.0\nminimist@1.2.5');
                   }}
-                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-cyan-400 border border-slate-700 transition-all"
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-cyan-400 border border-slate-700 transition-all"
                 >
                   Load NPM Sample
                 </button>
@@ -315,14 +423,14 @@ export const ScannerPage = () => {
                     setEcosystemInput('pypi');
                     setPackageListInput('urllib3@1.26.4\nflask@1.1.2\nrequests@2.25.1\njinja2@2.11.2');
                   }}
-                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-amber-400 border border-slate-700 transition-all"
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-amber-400 border border-slate-700 transition-all"
                 >
                   Load Python Sample
                 </button>
                 <button
                   type="button"
                   onClick={() => setPackageListInput('')}
-                  className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-slate-400 border border-slate-700 transition-all"
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-slate-400 border border-slate-700 transition-all"
                 >
                   Clear
                 </button>
@@ -334,12 +442,92 @@ export const ScannerPage = () => {
               value={packageListInput}
               onChange={(e) => setPackageListInput(e.target.value)}
               disabled={isAnalyzing}
-              placeholder="Enter packages line by line (e.g. lodash@4.17.20 or flask==1.1.2) or paste package.json / requirements.txt..."
+              placeholder="Upload or paste package.json, package-lock.json, requirements.txt, or enter packages line-by-line (e.g. lodash@4.17.20 or flask==1.1.2)..."
               className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3.5 text-xs font-mono text-slate-200 placeholder-slate-600 focus:outline-none focus:border-cyan-500/50 resize-y"
             />
             <p className="text-[11px] text-slate-400 font-mono">
-              Accepts format: <span className="text-cyan-400">package@version</span>, <span className="text-cyan-400">package==version</span>, or raw package names. Each package is queried directly against live NIST NVD CVE database.
+              Accepts JSON manifest (<span className="text-cyan-400">package.json</span>, <span className="text-cyan-400">package-lock.json</span>), <span className="text-cyan-400">requirements.txt</span>, or <span className="text-cyan-400">package@version</span>. Queried against live OSV &amp; NIST NVD databases.
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Combined Scan Session Execution Progress & Status Grid */}
+      {(runAllStatuses || (analysisResult && analysisResult.scanner_statuses)) && (
+        <Card className="border-cyan-500/40 bg-slate-900/80 shadow-[0_0_25px_rgba(0,243,255,0.08)]">
+          <CardHeader>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 w-full">
+              <CardTitle icon={Layers} subtitle="Session status across all 8 integrated security assessment modules">
+                Run All Scans: Multi-Vector Assessment Progress
+              </CardTitle>
+              {lastScanRef && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={FileText}
+                    onClick={() => navigate(`/reports/${lastScanRef}`)}
+                  >
+                    View Unified Report
+                  </Button>
+                  <a
+                    href={`/api/reports/${lastScanRef}/download?format=html`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-mono text-cyan-400 hover:border-cyan-400 transition-all flex items-center gap-1.5"
+                    title="Download HTML Report"
+                  >
+                    <Download className="w-3.5 h-3.5" /> HTML
+                  </a>
+                  <a
+                    href={`/api/reports/${lastScanRef}/download?format=csv`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700 text-xs font-mono text-emerald-400 hover:border-emerald-400 transition-all flex items-center gap-1.5"
+                    title="Download 11-Column CSV Report"
+                  >
+                    <Download className="w-3.5 h-3.5" /> CSV
+                  </a>
+                </div>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
+              {[
+                { key: 'dns', label: 'DNS Security', icon: Network, color: 'text-sky-400', scanOpt: 'DNS Security Checker' },
+                { key: 'cookies', label: 'Cookie Directives', icon: Cookie, color: 'text-amber-400', scanOpt: 'Cookie Security Checker' },
+                { key: 'dependencies', label: 'Dependencies', icon: Package, color: 'text-emerald-400', scanOpt: 'Dependency Scanner' },
+                { key: 'ssl', label: 'SSL/TLS Cipher', icon: Lock, color: 'text-purple-400', scanOpt: 'SSL/TLS Checker' },
+                { key: 'headers', label: 'HTTP Headers', icon: ShieldCheck, color: 'text-cyan-400', scanOpt: 'HTTP Security Headers Check' },
+                { key: 'ports', label: 'Port Scanner', icon: Server, color: 'text-rose-400', scanOpt: 'Port Scanner' },
+                { key: 'owasp', label: 'OWASP Top 10', icon: ShieldAlert, color: 'text-orange-400', scanOpt: 'OWASP Top 10' },
+                { key: 'whois', label: 'WHOIS Lookup', icon: Globe, color: 'text-blue-400', scanOpt: 'WHOIS Lookup' },
+              ].map((mod) => {
+                const statuses = runAllStatuses || analysisResult?.scanner_statuses || {};
+                const st = statuses[mod.key] || 'completed';
+                const Icon = mod.icon;
+                const isFail = st === 'failed';
+                return (
+                  <button
+                    key={mod.key}
+                    type="button"
+                    onClick={() => setSelectedScanType(mod.scanOpt)}
+                    className={`p-3 rounded-xl border text-center transition-all flex flex-col items-center justify-between gap-2 ${
+                      selectedScanType === mod.scanOpt
+                        ? 'border-cyan-400 bg-cyan-950/40 shadow-[0_0_15px_rgba(0,243,255,0.15)]'
+                        : 'border-slate-800 bg-slate-950 hover:border-slate-700'
+                    }`}
+                  >
+                    <Icon className={`w-5 h-5 ${mod.color}`} />
+                    <span className="text-[11px] font-mono text-slate-200 font-semibold">{mod.label}</span>
+                    <Badge variant={isFail ? 'critical' : 'success'} size="sm">
+                      {isFail ? 'FAILED' : 'COMPLETED'}
+                    </Badge>
+                  </button>
+                );
+              })}
+            </div>
           </CardContent>
         </Card>
       )}

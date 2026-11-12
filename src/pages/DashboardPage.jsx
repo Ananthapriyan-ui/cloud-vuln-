@@ -49,20 +49,21 @@ const MetricCard = memo(({ label, value, sub, color, icon: Icon, borderHover }) 
 const buildPostureData = (scans) => {
   if (!Array.isArray(scans) || scans.length === 0) return null;
   const completedScans = scans.filter(s => s && s.scan_data);
-  if (completedScans.length === 0) return null;
-  const avg = (arr) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+  if (!Array.isArray(completedScans) || completedScans.length === 0) return null;
+  const avg = (arr) => (Array.isArray(arr) && arr.length) ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
   const parseData = (s) => {
     try { return typeof s.scan_data === 'string' ? JSON.parse(s.scan_data) : s.scan_data; }
     catch { return null; }
   };
   const parsed = completedScans.map(parseData).filter(Boolean);
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
   return [
-    { subject: 'SSL/TLS', score: avg(parsed.map(d => d.ssl_summary?.is_valid ? 90 : 30).filter(v => v > 0)), fullMark: 100 },
-    { subject: 'Headers', score: avg(parsed.map(d => d.headers_summary?.score).filter(v => v != null)), fullMark: 100 },
-    { subject: 'OWASP:2025', score: avg(parsed.map(d => d.owasp_summary?.overall_score).filter(v => v != null)), fullMark: 100 },
-    { subject: 'Security Score', score: avg(parsed.map(d => d.security_score).filter(v => v != null)), fullMark: 100 },
-    { subject: 'CVE Risk', score: avg(parsed.map(d => Math.max(0, 100 - (d.critical_count || 0) * 20 - (d.high_count || 0) * 10)).filter(v => v != null)), fullMark: 100 },
-    { subject: 'Ports', score: avg(parsed.map(d => d.ports_summary ? Math.max(0, 100 - (d.ports_summary.open_ports_count || 0) * 10) : 85).filter(v => v > 0)), fullMark: 100 },
+    { subject: 'SSL/TLS', score: avg(parsed.map(d => d?.ssl_summary?.is_valid ? 90 : 30).filter(v => v > 0)), fullMark: 100 },
+    { subject: 'Headers', score: avg(parsed.map(d => d?.headers_summary?.score).filter(v => v != null)), fullMark: 100 },
+    { subject: 'OWASP:2025', score: avg(parsed.map(d => d?.owasp_summary?.overall_score).filter(v => v != null)), fullMark: 100 },
+    { subject: 'Security Score', score: avg(parsed.map(d => d?.security_score).filter(v => v != null)), fullMark: 100 },
+    { subject: 'CVE Risk', score: avg(parsed.map(d => Math.max(0, 100 - (d?.critical_count || 0) * 20 - (d?.high_count || 0) * 10)).filter(v => v != null)), fullMark: 100 },
+    { subject: 'Ports', score: avg(parsed.map(d => d?.ports_summary ? Math.max(0, 100 - (d.ports_summary.open_ports_count || 0) * 10) : 85).filter(v => v > 0)), fullMark: 100 },
   ];
 };
 
@@ -440,30 +441,30 @@ export const DashboardPage = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recentScans.map((scan) => (
-                    <TableRow key={scan.scan_ref || scan.id}>
+                  {(Array.isArray(recentScans) ? recentScans : []).map((scan) => (
+                    <TableRow key={scan?.scan_ref || scan?.id || Math.random()}>
                       <TableCell className="font-mono text-xs font-semibold text-slate-200 max-w-40 truncate">
-                        {scan.target}
+                        {scan?.target || 'Unknown'}
                       </TableCell>
                       <TableCell className="text-xs text-slate-400 flex items-center gap-1.5">
                         <Cloud className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                        <span className="truncate max-w-25">{scan.provider}</span>
+                        <span className="truncate max-w-25">{scan?.provider || 'Cloud'}</span>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={scan.status === 'passed' ? 'success' : scan.status} size="sm">
-                          {scan.status.toUpperCase()}
+                        <Badge variant={scan?.status === 'passed' ? 'success' : (scan?.status || 'passed')} size="sm">
+                          {(scan?.status || 'UNKNOWN').toUpperCase()}
                         </Badge>
                       </TableCell>
                       <TableCell className="font-mono font-bold text-xs text-rose-400">
-                        {scan.risk_score}
+                        {scan?.risk_score ?? 0}
                       </TableCell>
                       <TableCell className="text-xs text-slate-400 font-mono">
-                        {formatScanDate(scan.created_at)}
+                        {formatScanDate(scan?.created_at)}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button
                           size="sm" variant="outline"
-                          onClick={() => { addToast(`Re-scanning ${scan.target}`, 'info'); navigate('/scanner'); }}
+                          onClick={() => { addToast(`Re-scanning ${scan?.target || 'target'}`, 'info'); navigate('/scanner'); }}
                         >
                           Rescan
                         </Button>
@@ -484,7 +485,7 @@ export const DashboardPage = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2.5">
-            {activityLogs.length === 0 ? (
+            {(!Array.isArray(activityLogs) || activityLogs.length === 0) ? (
               <p className="text-xs text-slate-500 text-center py-4">No activity logged yet.</p>
             ) : (
               activityLogs.map((act) => {

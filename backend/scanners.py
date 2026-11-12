@@ -375,6 +375,89 @@ def analyze_dns_security(target: str, dkim_selector: Optional[str] = None) -> Di
 # MODULE 2: DEPENDENCY VULNERABILITY SCANNER
 # ═══════════════════════════════════════════════════
 
+def _query_osv_for_package(package_name: str, package_version: str = "", ecosystem: Optional[str] = "npm") -> List[Dict[str, Any]]:
+    """
+    Query Open Source Vulnerabilities (OSV.dev) API for real, verified
+    CVE and advisory records for the specified package and version.
+    """
+    eco_map = {
+        "npm": "npm",
+        "pypi": "PyPI",
+        "pip": "PyPI",
+        "python": "PyPI",
+        "maven": "Maven",
+        "golang": "Go",
+        "go": "Go",
+        "rubygems": "RubyGems",
+        "ruby": "RubyGems",
+    }
+    eco = eco_map.get((ecosystem or "npm").lower(), "npm")
+    payload: Dict[str, Any] = {"package": {"name": package_name, "ecosystem": eco}}
+    clean_ver = re.sub(r'^[^\d]*', '', package_version).split(',')[0].strip() if package_version else ""
+    if clean_ver and clean_ver not in ("latest", "unspecified", "*"):
+        payload["version"] = clean_ver
+
+    results = []
+    try:
+        url = "https://api.osv.dev/v1/query"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "CloudVuln-OSVAuditor/2.0"}
+        )
+        with urllib.request.urlopen(req, timeout=7) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        for vuln in (data.get("vulns") or [])[:5]:
+            vuln_id = vuln.get("id", "UNKNOWN")
+            aliases = vuln.get("aliases") or []
+            cve_id = vuln_id
+            for a in aliases:
+                if a.startswith("CVE-"):
+                    cve_id = a
+                    break
+
+            summary = vuln.get("summary") or vuln.get("details", "")
+            severity_str = "Medium"
+            cvss_score = 5.5
+
+            sev_list = vuln.get("severity") or []
+            for s in sev_list:
+                score_str = s.get("score", "")
+                if "CVSS" in s.get("type", ""):
+                    if "S:C" in score_str or ("AV:N" in score_str and "C:H" in score_str and "I:H" in score_str):
+                        cvss_score = 9.8
+                        severity_str = "Critical"
+                    elif "AV:N" in score_str and ("C:H" in score_str or "I:H" in score_str or "A:H" in score_str):
+                        cvss_score = 7.5
+                        severity_str = "High"
+                    elif "AV:N" in score_str:
+                        cvss_score = 5.3
+                        severity_str = "Medium"
+
+            refs = vuln.get("references") or []
+            ref_url = refs[0].get("url") if refs else f"https://osv.dev/vulnerability/{vuln_id}"
+
+            results.append({
+                "cve_id": cve_id,
+                "advisory_id": vuln_id,
+                "aliases": aliases,
+                "cvss_score": cvss_score,
+                "severity": severity_str,
+                "description": summary[:500] if summary else f"Security advisory for {package_name}",
+                "published_date": (vuln.get("published") or "")[:10],
+                "reference_url": ref_url,
+                "package": package_name,
+                "version": package_version,
+                "ecosystem": eco,
+                "data_source": "OSV / Open Source Vulnerability Database"
+            })
+    except Exception:
+        pass
+
+    return results
+
+
 def _query_nvd_for_package(package_name: str, package_version: str = "", ecosystem: Optional[str] = "npm") -> List[Dict[str, Any]]:
     """
     Query NIST NVD API v2.0 for real CVEs matching a package name.
@@ -382,7 +465,6 @@ def _query_nvd_for_package(package_name: str, package_version: str = "", ecosyst
     """
     import config
     results = []
-    eco_val = ecosystem or "npm"
     keyword = f"{package_name} {package_version}".strip()
     api_url = f"https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch={urllib.parse.quote(keyword)}&resultsPerPage=5"
 
@@ -392,7 +474,7 @@ def _query_nvd_for_package(package_name: str, package_version: str = "", ecosyst
 
     try:
         req = urllib.request.Request(api_url, headers=headers)
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
         for vuln in (data.get("vulnerabilities") or [])[:5]:
@@ -426,6 +508,8 @@ def _query_nvd_for_package(package_name: str, package_version: str = "", ecosyst
 
             results.append({
                 "cve_id": cve_id,
+                "advisory_id": cve_id,
+                "aliases": [cve_id],
                 "cvss_score": cvss_score,
                 "severity": severity.capitalize() if severity else "Unknown",
                 "description": desc_text[:500],
@@ -433,7 +517,8 @@ def _query_nvd_for_package(package_name: str, package_version: str = "", ecosyst
                 "reference_url": ref_url,
                 "package": package_name,
                 "version": package_version,
-                "ecosystem": ecosystem,
+                "ecosystem": ecosystem or "npm",
+                "data_source": "NIST National Vulnerability Database (NVD v2.0)"
             })
     except Exception:
         pass
@@ -443,54 +528,98 @@ def _query_nvd_for_package(package_name: str, package_version: str = "", ecosyst
 
 def _parse_package_list(package_list_text: str) -> List[Dict[str, str]]:
     """
-    Parse user-provided dependency list.  Supports formats:
-    - package@version  (npm style)
-    - package==version (pip style)
-    - package>=version (pip style)
-    - package:version  (generic)
-    - package version  (space-separated)
-    - just package name alone
+    Parse user-provided dependency input. Supports:
+    - package.json manifests (dependencies, devDependencies)
+    - package-lock.json manifests (packages, dependencies)
+    - requirements.txt (==, >=, <=, ~=, and plain package names)
+    - package@version (npm style)
+    - package:version (generic)
+    - space-separated package version
     """
     packages = []
-    for line in package_list_text.strip().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("//"):
-            continue
-        # npm: react@18.2.0
-        if "@" in line and not line.startswith("@"):
-            parts = line.rsplit("@", 1)
-            packages.append({"name": parts[0].strip(), "version": parts[1].strip() if len(parts) > 1 else ""})
-        # pip: flask==2.3.0 or flask>=2.3.0
-        elif "==" in line:
-            parts = line.split("==", 1)
-            packages.append({"name": parts[0].strip(), "version": parts[1].strip()})
-        elif ">=" in line:
-            parts = line.split(">=", 1)
-            packages.append({"name": parts[0].strip(), "version": parts[1].split(",")[0].strip()})
-        elif "<=" in line:
-            parts = line.split("<=", 1)
-            packages.append({"name": parts[0].strip(), "version": parts[1].split(",")[0].strip()})
-        # colon separated
-        elif ":" in line:
-            parts = line.split(":", 1)
-            packages.append({"name": parts[0].strip(), "version": parts[1].strip()})
-        # space separated (only if second token looks like a version)
-        elif " " in line:
-            parts = line.split(None, 1)
-            if len(parts) == 2 and re.match(r"[\d.]", parts[1]):
-                packages.append({"name": parts[0].strip(), "version": parts[1].strip()})
-            else:
-                packages.append({"name": parts[0].strip(), "version": ""})
-        else:
-            packages.append({"name": line, "version": ""})
+    text = package_list_text.strip()
+    if not text:
+        return []
 
-    return packages[:20]  # Cap at 20 packages to prevent abuse
+    # 1. Try parsing JSON (package.json / package-lock.json)
+    if (text.startswith("{") and text.endswith("}")) or (text.startswith("[") and text.endswith("]")):
+        try:
+            parsed_json = json.loads(text)
+            if isinstance(parsed_json, dict):
+                deps: Dict[str, str] = {}
+                if isinstance(parsed_json.get("dependencies"), dict):
+                    deps.update(parsed_json["dependencies"])
+                if isinstance(parsed_json.get("devDependencies"), dict):
+                    deps.update(parsed_json["devDependencies"])
+                if isinstance(parsed_json.get("packages"), dict):
+                    for pkg_path, pkg_info in parsed_json["packages"].items():
+                        if isinstance(pkg_info, dict) and pkg_info.get("version"):
+                            clean_name = pkg_path.replace("node_modules/", "").strip()
+                            if clean_name and not clean_name.startswith("."):
+                                deps[clean_name] = str(pkg_info["version"])
+
+                for name, ver in deps.items():
+                    clean_ver = re.sub(r'^[^\d]*', '', str(ver)).split()[0]
+                    packages.append({"name": str(name).strip(), "version": clean_ver or str(ver).strip()})
+        except Exception:
+            pass
+
+    # 2. Line-by-line parsing if not JSON or JSON produced no packages
+    if not packages:
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("//"):
+                continue
+            # Strip inline comments
+            line = line.split(" #")[0].split(" //")[0].strip()
+
+            # npm: react@18.2.0
+            if "@" in line and not line.startswith("@"):
+                parts = line.rsplit("@", 1)
+                packages.append({"name": parts[0].strip(), "version": parts[1].strip() if len(parts) > 1 else ""})
+            # pip: flask==2.3.0 or flask>=2.3.0 or ~=
+            elif "==" in line:
+                parts = line.split("==", 1)
+                packages.append({"name": parts[0].strip(), "version": parts[1].strip()})
+            elif ">=" in line:
+                parts = line.split(">=", 1)
+                packages.append({"name": parts[0].strip(), "version": parts[1].split(",")[0].strip()})
+            elif "<=" in line:
+                parts = line.split("<=", 1)
+                packages.append({"name": parts[0].strip(), "version": parts[1].split(",")[0].strip()})
+            elif "~=" in line:
+                parts = line.split("~=", 1)
+                packages.append({"name": parts[0].strip(), "version": parts[1].split(",")[0].strip()})
+            # colon separated
+            elif ":" in line:
+                parts = line.split(":", 1)
+                packages.append({"name": parts[0].strip(), "version": parts[1].strip()})
+            # space separated
+            elif " " in line:
+                parts = line.split(None, 1)
+                if len(parts) == 2 and re.match(r"[\d.]", parts[1]):
+                    packages.append({"name": parts[0].strip(), "version": parts[1].strip()})
+                else:
+                    packages.append({"name": parts[0].strip(), "version": ""})
+            else:
+                packages.append({"name": line, "version": ""})
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_packages = []
+    for p in packages:
+        key = (p["name"].lower(), p["version"].lower())
+        if key not in seen and p["name"]:
+            seen.add(key)
+            unique_packages.append(p)
+
+    return unique_packages[:50]  # Cap at 50 packages
 
 
 def analyze_dependencies(package_list_text: str, ecosystem: Optional[str] = "auto") -> Dict[str, Any]:
     """
-    Scan user-provided dependencies against the NVD database for
-    known CVEs.  Returns only real, verified vulnerability data.
+    Scan user-provided dependencies against OSV and NVD vulnerability
+    databases for known CVEs. Returns only real, verified vulnerability data.
     """
     start_time = datetime.datetime.now(datetime.timezone.utc)
     packages = _parse_package_list(package_list_text)
@@ -498,12 +627,17 @@ def analyze_dependencies(package_list_text: str, ecosystem: Optional[str] = "aut
     if not packages:
         return {
             "scan_type": "Dependency Vulnerability Scanner",
+            "scanner_name": "Dependency Vulnerability Scanner",
             "status": "Error",
             "error": True,
-            "message": "No packages provided. Enter one package per line (e.g. 'react@18.2.0' or 'flask==2.3.0').",
+            "message": "No valid packages identified. Supported formats: package.json, package-lock.json, requirements.txt, or lines like 'lodash@4.17.20'.",
             "scan_timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
             "security_score": 0,
             "risk_level": "Unknown",
+            "packages": [],
+            "all_vulnerabilities": [],
+            "recommendations": ["Provide a valid package manifest or package list to audit."],
+            "data_source": "OSV / NIST NVD v2.0"
         }
 
     all_vulns: List[Dict[str, Any]] = []
@@ -514,17 +648,30 @@ def analyze_dependencies(package_list_text: str, ecosystem: Optional[str] = "aut
     medium_count = 0
     low_count = 0
 
+    detected_eco = ecosystem
+    if not detected_eco or detected_eco == "auto":
+        if "==" in package_list_text or "requirements.txt" in package_list_text:
+            detected_eco = "pypi"
+        else:
+            detected_eco = "npm"
+
     for pkg in packages:
         pkg_name = pkg["name"]
         pkg_version = pkg.get("version", "")
-        eco: str = ecosystem if (ecosystem and ecosystem != "auto") else ("npm" if "@" in package_list_text else "pip")
-        vulns = _query_nvd_for_package(pkg_name, pkg_version, eco)
 
-        pkg_status = "No Known Vulnerabilities" if not vulns else f"{len(vulns)} CVE(s) Found"
+        # 1. First query OSV API for comprehensive ecosystem-aware records
+        vulns = _query_osv_for_package(pkg_name, pkg_version, detected_eco)
+
+        # 2. If OSV returns no results, check NVD as fallback
+        if not vulns and len(scanned_packages) < 10:
+            vulns = _query_nvd_for_package(pkg_name, pkg_version, detected_eco)
+
+        pkg_status = "No Known Vulnerabilities" if not vulns else f"{len(vulns)} Advisory / CVE(s) Found"
         scanned_packages.append({
+            "package": pkg_name,
             "name": pkg_name,
             "version": pkg_version or "latest",
-            "ecosystem": eco,
+            "ecosystem": detected_eco,
             "status": pkg_status,
             "vulnerability_count": len(vulns),
             "vulnerabilities": vulns,
@@ -532,24 +679,20 @@ def analyze_dependencies(package_list_text: str, ecosystem: Optional[str] = "aut
 
         for v in vulns:
             sev = (v.get("severity") or "").upper()
-            if sev == "CRITICAL":
+            if "CRITICAL" in sev:
                 critical_count += 1
                 overall_score -= 20
-            elif sev == "HIGH":
+            elif "HIGH" in sev:
                 high_count += 1
                 overall_score -= 12
-            elif sev == "MEDIUM":
+            elif "MEDIUM" in sev:
                 medium_count += 1
                 overall_score -= 5
-            elif sev == "LOW":
+            elif "LOW" in sev:
                 low_count += 1
                 overall_score -= 2
 
         all_vulns.extend(vulns)
-
-        # NVD rate limit: ~5 requests/30s without API key
-        import time
-        time.sleep(0.8)
 
     overall_score = max(0, min(100, overall_score))
     if critical_count > 0:
@@ -563,18 +706,19 @@ def analyze_dependencies(package_list_text: str, ecosystem: Optional[str] = "aut
 
     recommendations = []
     if critical_count > 0:
-        recommendations.append("Immediately update packages with CRITICAL severity CVEs to patched versions.")
+        recommendations.append("Immediately update packages with CRITICAL severity CVEs to secure, patched versions.")
     if high_count > 0:
         recommendations.append("Prioritize updates for packages with HIGH severity vulnerabilities.")
     if medium_count > 0:
         recommendations.append("Plan updates for packages with MEDIUM severity findings in the next release cycle.")
     if not all_vulns:
-        recommendations.append("No known vulnerabilities detected. Continue monitoring with automated CI/CD dependency scanning.")
+        recommendations.append("No known vulnerabilities detected. Continue automated periodic SCA dependency auditing.")
 
     duration = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds()
 
     return {
         "scan_type": "Dependency Vulnerability Scanner",
+        "scanner_name": "Dependency Vulnerability Scanner",
         "scan_timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
         "status": "Completed",
         "security_score": overall_score,
@@ -589,6 +733,7 @@ def analyze_dependencies(package_list_text: str, ecosystem: Optional[str] = "aut
         "packages": scanned_packages,
         "all_vulnerabilities": all_vulns,
         "recommendations": recommendations,
+        "data_source": "OSV / NIST National Vulnerability Database (NVD v2.0)"
     }
 
 

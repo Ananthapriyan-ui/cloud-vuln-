@@ -520,9 +520,9 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
     cve_findings: List[Dict] = parsed.get("cve_findings") or []
     recommendations: List[str] = parsed.get("recommendations") or []
 
-    dns_data = parsed if (parsed.get("scan_type") == "DNS Security Checker" or "records_summary" in parsed) else parsed.get("dns_summary", {})
-    dep_data = parsed if (parsed.get("scan_type") == "Dependency Vulnerability Scanner" or "packages" in parsed) else parsed.get("dependency_summary", {})
-    cookie_data = parsed if (parsed.get("scan_type") == "Cookie Security Checker" or "cookies" in parsed) else parsed.get("cookie_summary", {})
+    dns_data = parsed.get("dns_summary") or (parsed if (parsed.get("scan_type") == "DNS Security Checker" or "records_summary" in parsed) else {})
+    dep_data = parsed.get("dependency_summary") or (parsed if (parsed.get("scan_type") == "Dependency Vulnerability Scanner" or "packages" in parsed) else {})
+    cookie_data = parsed.get("cookie_summary") or (parsed if (parsed.get("scan_type") == "Cookie Security Checker" or "cookies" in parsed) else {})
 
     whois_html = _build_whois_section(whois) if whois else ""
     ssl_html = _build_ssl_section(ssl_data) if ssl_data else ""
@@ -615,106 +615,264 @@ def generate_html_report(scan_data: Dict[str, Any]) -> str:
 
 
 def generate_csv_report(scan_data: Dict[str, Any]) -> str:
+    """
+    Generate unified CSV report containing actual security findings with consistent schema:
+    [Scan ID, Scanner Name, Target, Scan Date, Finding Title, Severity, Description, Evidence, Recommendation, Status, Data Source]
+    """
     import csv
     parsed = scan_data.get("scan_data") or {}
+    scan_ref = str(scan_data.get("scan_ref") or "UNKNOWN")
+    target = str(scan_data.get("target") or "Unknown Target")
+    scan_date = str(scan_data.get("created_at") or scan_data.get("executed_at") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"))
+
     owasp = parsed.get("owasp_summary") or {}
     findings = owasp.get("findings") or []
     cve_findings = parsed.get("cve_findings") or []
     headers_info = parsed.get("headers_summary") or {}
     ssl_info = parsed.get("ssl_summary") or {}
     ports_info = parsed.get("ports_summary") or {}
-    dns_info = parsed if (parsed.get("scan_type") == "DNS Security Checker" or "records_summary" in parsed) else parsed.get("dns_summary", {})
-    dep_info = parsed if (parsed.get("scan_type") == "Dependency Vulnerability Scanner" or "packages" in parsed) else parsed.get("dependency_summary", {})
-    cookie_info = parsed if (parsed.get("scan_type") == "Cookie Security Checker" or "cookies" in parsed) else parsed.get("cookie_summary", {})
+    dns_info = parsed.get("dns_summary") or (parsed if (parsed.get("scan_type") == "DNS Security Checker" or "records_summary" in parsed) else {})
+    dep_info = parsed.get("dependency_summary") or (parsed if (parsed.get("scan_type") == "Dependency Vulnerability Scanner" or "packages" in parsed) else {})
+    cookie_info = parsed.get("cookie_summary") or (parsed if (parsed.get("scan_type") == "Cookie Security Checker" or "cookies" in parsed) else {})
+
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["CloudVuln Security Assessment Report"])
-    writer.writerow([])
-    writer.writerow(["Assessment Metadata", "Value"])
-    writer.writerow(["Scan Reference", scan_data.get("scan_ref", "")])
-    writer.writerow(["Target", scan_data.get("target", "")])
-    writer.writerow(["Provider", scan_data.get("provider", scan_data.get("cloud_provider", ""))])
-    writer.writerow(["Security Score", parsed.get("security_score", "N/A")])
-    writer.writerow(["Risk Score", scan_data.get("risk_score", "")])
-    writer.writerow(["Status", scan_data.get("status", "")])
-    writer.writerow(["Critical Count", scan_data.get("critical_count", 0)])
-    writer.writerow(["High Count", scan_data.get("high_count", 0)])
-    writer.writerow(["Medium Count", scan_data.get("medium_count", 0)])
-    writer.writerow(["Low Count", scan_data.get("low_count", 0)])
-    writer.writerow(["Execution Date", scan_data.get("created_at", scan_data.get("executed_at", ""))])
-    writer.writerow([])
 
-    # DNS Security Checker
-    if dns_info.get("findings"):
-        writer.writerow(["DNS Security Findings"])
-        writer.writerow(["Check", "Status", "Severity", "Description", "Recommendation"])
-        for f in dns_info["findings"]:
-            writer.writerow([f.get("check",""), f.get("status",""), f.get("severity",""), f.get("description",""), f.get("recommendation","")])
-        writer.writerow([])
+    # Required 11 consistent columns
+    headers = [
+        "Scan ID",
+        "Scanner Name",
+        "Target",
+        "Scan Date",
+        "Finding Title",
+        "Severity",
+        "Description",
+        "Evidence",
+        "Recommendation",
+        "Status",
+        "Data Source"
+    ]
+    writer.writerow(headers)
 
-    # Dependency Vulnerabilities
-    if dep_info.get("packages"):
-        writer.writerow(["Dependency Vulnerability Audit"])
-        writer.writerow(["Package", "Version", "Ecosystem", "CVEs Count", "CVE IDs", "Max Severity"])
-        for p in dep_info["packages"]:
-            vulns = p.get("vulnerabilities", [])
-            cve_ids = ", ".join(v.get("cve_id","") for v in vulns)
-            writer.writerow([p.get("package",""), p.get("version",""), p.get("ecosystem",""), len(vulns), cve_ids])
-        writer.writerow([])
+    has_rows = False
 
-    # Cookie Security Checker
-    if cookie_info.get("cookies"):
-        writer.writerow(["Cookie Security Directives"])
-        writer.writerow(["Cookie Name", "Secure", "HttpOnly", "SameSite", "Path", "Domain", "Severity", "Issues"])
-        for c in cookie_info["cookies"]:
-            def _get_issue_str(i):
-                if isinstance(i, dict):
-                    return i.get("description") or i.get("attribute") or str(i)
-                return str(i)
-            issues_str = "; ".join(_get_issue_str(iss) for iss in c.get("issues", []))
-            writer.writerow([c.get("name",""), "Yes" if c.get("secure") else "No", "Yes" if c.get("httponly") else "No", c.get("samesite",""), c.get("path",""), c.get("domain",""), c.get("severity",""), issues_str])
-        writer.writerow([])
+    # 1. DNS Security Checker Findings
+    if isinstance(dns_info, dict) and dns_info.get("findings"):
+        dns_target = dns_info.get("domain") or target
+        for f in dns_info.get("findings", []):
+            rec_evidence = ", ".join(str(r) for r in f.get("records", [])) if f.get("records") else f.get("status", "")
+            writer.writerow([
+                scan_ref,
+                "DNS Security Checker",
+                dns_target,
+                scan_date,
+                f.get("check", "DNS Check"),
+                f.get("severity", "Informational"),
+                f.get("description", ""),
+                rec_evidence,
+                f.get("recommendation", "") or "No action needed",
+                f.get("status", "Completed"),
+                "Authoritative DNS (dnspython)"
+            ])
+            has_rows = True
 
-    # HTTP Security Headers
-    if headers_info.get("checks"):
-        writer.writerow(["HTTP Security Headers Analysis"])
-        writer.writerow(["Header Name", "Status", "Configured Value", "Risk if Missing", "Recommendation"])
-        for h in headers_info["checks"]:
-            writer.writerow([h.get("name",""), "Present" if h.get("present") else "Missing", h.get("value",""), h.get("risk_if_missing",""), h.get("recommendation","")])
-        writer.writerow([])
+    # 2. Dependency Vulnerability Scanner Findings
+    if isinstance(dep_info, dict) and dep_info.get("packages"):
+        for p in dep_info.get("packages", []):
+            pname = p.get("name") or p.get("package") or "package"
+            pver = p.get("version") or "latest"
+            eco = p.get("ecosystem") or "npm"
+            pkg_target = f"{pname}@{pver}"
+            vulns = p.get("vulnerabilities") or []
 
-    # SSL / TLS Certificate
-    if ssl_info:
-        writer.writerow(["SSL / TLS Configuration Audit"])
-        writer.writerow(["Property", "Value"])
-        writer.writerow(["Certificate Status", ssl_info.get("cert_status", "")])
-        writer.writerow(["Issuer", ssl_info.get("issuer", "")])
-        writer.writerow(["Expiry Date", ssl_info.get("expiry_date", "")])
-        writer.writerow(["TLS Protocol Version", ssl_info.get("tls_version", "")])
-        writer.writerow([])
+            if vulns:
+                for v in vulns:
+                    writer.writerow([
+                        scan_ref,
+                        "Dependency Vulnerability Scanner",
+                        pkg_target,
+                        scan_date,
+                        f"{v.get('cve_id')} ({pname})",
+                        v.get("severity", "Medium"),
+                        v.get("description", ""),
+                        f"Ecosystem: {eco}, CVSS: {v.get('cvss_score', 'N/A')}, Ref: {v.get('reference_url', '')}",
+                        "Update package to non-vulnerable version",
+                        "Vulnerable",
+                        v.get("data_source", "OSV / NIST NVD v2.0")
+                    ])
+                    has_rows = True
+            else:
+                writer.writerow([
+                    scan_ref,
+                    "Dependency Vulnerability Scanner",
+                    pkg_target,
+                    scan_date,
+                    f"Clean: {pname}",
+                    "Informational",
+                    "No known public vulnerabilities matching package version.",
+                    f"Ecosystem: {eco}",
+                    "Maintain current patch release",
+                    "Clean",
+                    "OSV / NIST NVD v2.0"
+                ])
+                has_rows = True
 
-    # Port Scanner
-    if ports_info.get("ports"):
-        writer.writerow(["Port Scanner Assessment"])
-        writer.writerow(["Port", "State", "Service Name", "Risk Level"])
-        for p in ports_info["ports"]:
-            writer.writerow([p.get("port",""), p.get("state",""), p.get("service",""), p.get("risk_level","")])
-        writer.writerow([])
+    # 3. Cookie Security Checker Findings
+    if isinstance(cookie_info, dict) and cookie_info.get("cookies"):
+        cookie_target = cookie_info.get("target") or target
+        for c in cookie_info.get("cookies", []):
+            cname = c.get("name") or "cookie"
+            c_evidence = f"Secure={c.get('secure')}, HttpOnly={c.get('httponly')}, SameSite={c.get('samesite')}, Path={c.get('path')}, Domain={c.get('domain')}"
+            issues = c.get("issues") or []
 
-    # OWASP Top 10:2025
-    if findings:
-        writer.writerow(["OWASP Top 10:2025 Findings"])
-        writer.writerow(["OWASP ID", "Category", "Title", "Status", "Severity", "Description", "Evidence", "Affected Component", "Impact", "Recommendation", "CVSS Score", "Related CVE", "Reference"])
+            def _get_issue_dict(iss):
+                if isinstance(iss, dict):
+                    return iss
+                return {"description": str(iss), "severity": "Medium", "status": "Missing", "recommendation": ""}
+
+            if issues:
+                for iss in issues:
+                    idict = _get_issue_dict(iss)
+                    writer.writerow([
+                        scan_ref,
+                        "Cookie Security Checker",
+                        cookie_target,
+                        scan_date,
+                        f"Cookie '{cname}': {idict.get('attribute') or 'Directive'}",
+                        idict.get("severity", "Medium"),
+                        idict.get("description", ""),
+                        c_evidence,
+                        idict.get("recommendation", "") or "Add security flags",
+                        idict.get("status", "Missing"),
+                        "HTTP Response Set-Cookie Header"
+                    ])
+                    has_rows = True
+            else:
+                writer.writerow([
+                    scan_ref,
+                    "Cookie Security Checker",
+                    cookie_target,
+                    scan_date,
+                    f"Cookie '{cname}': Fully Protected",
+                    "Informational",
+                    "Cookie configured with required Secure, HttpOnly, and SameSite directives.",
+                    c_evidence,
+                    "Maintain current configuration",
+                    "Passed",
+                    "HTTP Response Set-Cookie Header"
+                ])
+                has_rows = True
+
+    # 4. HTTP Security Headers Findings
+    if isinstance(headers_info, dict) and headers_info.get("checks"):
+        for h in headers_info.get("checks", []):
+            h_status = "Present" if h.get("present") else "Missing"
+            h_sev = "Informational" if h.get("present") else (h.get("risk_if_missing") or "Medium")
+            writer.writerow([
+                scan_ref,
+                "HTTP Security Headers Check",
+                target,
+                scan_date,
+                f"Header: {h.get('name')}",
+                h_sev,
+                h.get("description") or f"Evaluation of {h.get('name')} header configuration",
+                f"Observed: {h.get('value') or 'None'}",
+                h.get("recommendation") or "Configure header with security policy",
+                h_status,
+                "HTTP Response Headers"
+            ])
+            has_rows = True
+
+    # 5. SSL/TLS Checker Findings
+    if isinstance(ssl_info, dict) and ssl_info.get("tls_version"):
+        ssl_status = "Valid" if ssl_info.get("is_valid", True) else "Invalid"
+        ssl_sev = "Informational" if ssl_info.get("is_valid", True) else "Critical"
+        ssl_recs = "; ".join(ssl_info.get("recommendations", [])) if ssl_info.get("recommendations") else "Certificate is valid"
+        writer.writerow([
+            scan_ref,
+            "SSL/TLS Checker",
+            target,
+            scan_date,
+            f"TLS Protocol: {ssl_info.get('tls_version')}, Cert: {ssl_info.get('cert_status')}",
+            ssl_sev,
+            f"Issuer: {ssl_info.get('issuer')}, Expiry: {ssl_info.get('expiry_date')}",
+            f"Days Left: {ssl_info.get('days_until_expiration', 'N/A')}, Cipher: {ssl_info.get('cipher_suite', 'N/A')}",
+            ssl_recs,
+            ssl_status,
+            "TLS Handshake Certificate Chain"
+        ])
+        has_rows = True
+
+    # 6. Port Scanner Findings
+    if isinstance(ports_info, dict) and ports_info.get("ports"):
+        for p in ports_info.get("ports", []):
+            writer.writerow([
+                scan_ref,
+                "Port Scanner",
+                target,
+                scan_date,
+                f"Port {p.get('port')} ({p.get('service')})",
+                p.get("risk_level", "Medium"),
+                f"Port {p.get('port')} is {p.get('state')} running {p.get('service')}",
+                f"State: {p.get('state')}",
+                "Restrict external ingress if not strictly necessary",
+                p.get("state", "Open"),
+                "TCP Socket Connect Probe"
+            ])
+            has_rows = True
+
+    # 7. OWASP Top 10:2025 Findings
+    if isinstance(owasp, dict) and findings:
         for f in findings:
-            writer.writerow([f.get("owasp_id",""), f.get("category",""), f.get("title",""), f.get("status",""), f.get("severity",""), f.get("description",""), f.get("evidence",""), f.get("affected_component",""), f.get("impact",""), f.get("recommendation",""), f.get("cvss_score",""), f.get("related_cve",""), f.get("reference","")])
-        writer.writerow([])
+            writer.writerow([
+                scan_ref,
+                "OWASP Top 10:2025",
+                target,
+                scan_date,
+                f.get("title") or f.get("category") or "OWASP Finding",
+                f.get("severity", "Medium"),
+                f.get("description", ""),
+                f.get("evidence", ""),
+                f.get("recommendation", "") or "Follow OWASP remediation guidelines",
+                f.get("status", "Warning"),
+                "OWASP Top 10:2025 Rules Engine"
+            ])
+            has_rows = True
 
-    # CVE Findings
+    # 8. CVE Findings
     if cve_findings:
-        writer.writerow(["CVE / NVD Findings"])
-        writer.writerow(["CVE ID", "Severity", "CVSS Score", "Description", "Published Date", "Reference URL"])
         for c in cve_findings:
-            writer.writerow([c.get("cve_id",""), c.get("severity",""), c.get("cvss_score",""), c.get("description",""), c.get("published_date",""), c.get("reference_url","")])
+            writer.writerow([
+                scan_ref,
+                "CVE Lookup",
+                target,
+                scan_date,
+                c.get("cve_id", "CVE"),
+                c.get("severity", "High"),
+                c.get("description", ""),
+                f"CVSS Score: {c.get('cvss_score', 'N/A')}, Reference: {c.get('reference_url', '')}",
+                "Apply vendor security update / patch",
+                "Identified",
+                "NIST National Vulnerability Database (NVD v2.0)"
+            ])
+            has_rows = True
+
+    # Fallback if scan had no individual sub-findings
+    if not has_rows:
+        writer.writerow([
+            scan_ref,
+            scan_data.get("scan_type") or "Security Assessment",
+            target,
+            scan_date,
+            "Overall Security Posture Assessment",
+            scan_data.get("status") or "Passed",
+            parsed.get("executive_summary") or "Automated assessment completed.",
+            f"Security Score: {parsed.get('security_score', '100')}/100",
+            "; ".join(parsed.get("recommendations", [])) if parsed.get("recommendations") else "Maintain current security controls",
+            scan_data.get("status", "Completed"),
+            "CloudVuln Security Engine"
+        ])
+
     return output.getvalue()
 
 

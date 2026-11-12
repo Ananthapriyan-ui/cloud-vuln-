@@ -17,7 +17,7 @@ export const LoadingScreen = ({ message = 'Initializing Cloud Security Engine...
             CLOUD<span className="text-cyan-400">VULN</span>
           </h1>
           <p className="text-xs font-mono tracking-widest text-slate-400 uppercase mt-1">
-            SecOps Control Platform
+            Security Control Platform
           </p>
         </div>
 

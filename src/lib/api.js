@@ -219,6 +219,35 @@ export const api = {
       body: JSON.stringify({ target_url: targetUrl }),
     }),
 
+  analyzeDns: (domain, dkimSelector) =>
+    apiFetch('/analysis/dns', {
+      method: 'POST',
+      body: JSON.stringify({ domain, dkim_selector: dkimSelector || undefined }),
+    }),
+
+  analyzeDependencies: (packageList, ecosystem = 'npm') =>
+    apiFetch('/analysis/dependencies', {
+      method: 'POST',
+      body: JSON.stringify({ package_list: packageList, ecosystem }),
+    }),
+
+  analyzeCookies: (targetUrl) =>
+    apiFetch('/analysis/cookies', {
+      method: 'POST',
+      body: JSON.stringify({ target_url: targetUrl }),
+    }),
+
+  runAllScans: (targetUrl, packageList, ecosystem = 'npm', dkimSelector) =>
+    apiFetch('/analysis/run-all', {
+      method: 'POST',
+      body: JSON.stringify({
+        target_url: targetUrl,
+        package_list: packageList || undefined,
+        ecosystem,
+        dkim_selector: dkimSelector || undefined,
+      }),
+    }),
+
   searchCve: (query) =>
     apiFetch(`/cve/search?query=${encodeURIComponent(query)}`, {}, true, 120_000),
 

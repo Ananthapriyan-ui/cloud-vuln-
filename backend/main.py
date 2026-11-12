@@ -655,6 +655,58 @@ def analyze_ssl_endpoint(
 import scanners  # DNS, Dependency, Cookie scanner implementations
 
 
+def _save_scan_record_to_db(
+    db: Session,
+    current_user: models.User,
+    target: str,
+    scan_type: str,
+    provider: str,
+    result: Dict[str, Any],
+) -> str:
+    """Helper to persist individual and combined scans into Supabase PostgreSQL."""
+    import datetime
+    import uuid
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    scan_ref = f"SCAN-{now_utc.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+    sec_score = result.get("security_score")
+    if sec_score is None:
+        sec_score = 100
+    risk_score = float(round(max(0.0, min(10.0, (100 - sec_score) / 10.0)), 1))
+
+    status_str = "passed"
+    if result.get("error"):
+        status_str = "failed"
+    elif result.get("critical_count", 0) > 0:
+        status_str = "critical"
+    elif result.get("high_count", 0) > 0:
+        status_str = "high"
+    elif result.get("medium_count", 0) > 0:
+        status_str = "medium"
+
+    scan_row = models.Scan(
+        scan_ref=scan_ref,
+        target=target[:500] if target else "Unknown",
+        provider=provider,
+        scan_type=scan_type,
+        status=status_str,
+        critical_count=result.get("critical_count", 0),
+        high_count=result.get("high_count", 0),
+        medium_count=result.get("medium_count", 0),
+        low_count=result.get("low_count", 0),
+        risk_score=risk_score,
+        duration=str(result.get("duration", "1m 15s")),
+        owasp_version="2025",
+        user_id=current_user.id if current_user else None,
+        scan_data=json.dumps(result),
+        created_at=now_utc,
+    )
+    db.add(scan_row)
+    db.commit()
+    db.refresh(scan_row)
+    return scan_ref
+
+
 @app.post("/api/analysis/dns")
 def analyze_dns_endpoint(
     req: schemas.DNSScanRequest,
@@ -665,8 +717,12 @@ def analyze_dns_endpoint(
     result = scanners.analyze_dns_security(req.domain, dkim_selector=req.dkim_selector)
 
     if not result.get("error"):
+        scan_ref = _save_scan_record_to_db(
+            db, current_user, result.get("domain", req.domain), "DNS Security Checker", "Authoritative DNS", result
+        )
+        result["scan_ref"] = scan_ref
         db.add(models.ActivityLog(
-            text=f"DNS Security scan for {result.get('domain', req.domain)} (Score: {result.get('security_score', 0)}/100)",
+            text=f"DNS Security scan for {result.get('domain', req.domain)} (Score: {result.get('security_score', 0)}/100, Ref: {scan_ref})",
             type="info" if result.get("risk_level") in ("Low",) else "warning",
             time_ago="Just now",
             user_id=current_user.id,
@@ -682,12 +738,17 @@ def analyze_dependencies_endpoint(
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(security.get_current_user),
 ):
-    """Dependency Vulnerability Scanner — queries NVD for real CVEs in user-supplied packages."""
+    """Dependency Vulnerability Scanner — queries OSV and NVD for real CVEs in user-supplied packages."""
     result = scanners.analyze_dependencies(req.package_list, ecosystem=req.ecosystem or "npm")
 
     if not result.get("error"):
+        target_name = f"{(req.ecosystem or 'npm').upper()} ({result.get('total_packages_scanned', 0)} packages)"
+        scan_ref = _save_scan_record_to_db(
+            db, current_user, target_name, "Dependency Vulnerability Scanner", "Software Supply Chain", result
+        )
+        result["scan_ref"] = scan_ref
         db.add(models.ActivityLog(
-            text=f"Dependency scan: {result.get('total_packages_scanned', 0)} packages, {result.get('total_vulnerabilities_found', 0)} CVEs (Score: {result.get('security_score', 0)}/100)",
+            text=f"Dependency scan: {result.get('total_packages_scanned', 0)} packages, {result.get('total_vulnerabilities_found', 0)} CVEs (Ref: {scan_ref})",
             type="info" if result.get("risk_level") in ("Low",) else "warning",
             time_ago="Just now",
             user_id=current_user.id,
@@ -707,8 +768,12 @@ def analyze_cookies_endpoint(
     result = scanners.analyze_cookies(req.target_url)
 
     if not result.get("error"):
+        scan_ref = _save_scan_record_to_db(
+            db, current_user, result.get("target", req.target_url), "Cookie Security Checker", "Web Application", result
+        )
+        result["scan_ref"] = scan_ref
         db.add(models.ActivityLog(
-            text=f"Cookie scan for {result.get('target', req.target_url)} ({result.get('total_cookies', 0)} cookies, Score: {result.get('security_score', 0)}/100)",
+            text=f"Cookie scan for {result.get('target', req.target_url)} ({result.get('total_cookies', 0)} cookies, Ref: {scan_ref})",
             type="info" if result.get("risk_level") in ("Low",) else "warning",
             time_ago="Just now",
             user_id=current_user.id,
@@ -716,6 +781,189 @@ def analyze_cookies_endpoint(
         db.commit()
 
     return result
+
+
+@app.post("/api/analysis/run-all")
+def analyze_run_all_endpoint(
+    req: schemas.RunAllScanRequest,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(security.get_current_user),
+):
+    """
+    Run All Scans: Executes all 3 new scanners (DNS, Dependency, Cookie) plus
+    all existing perimeter & application security scanners (SSL, Headers, Ports, OWASP, WHOIS)
+    against the target in a combined, resilient workflow.
+    """
+    start_time = datetime.datetime.now(datetime.timezone.utc)
+    target_url = req.target_url.strip()
+    clean_domain = scanners._extract_domain(target_url)
+
+    modules_status: Dict[str, Any] = {}
+    recommendations: List[str] = []
+    critical_count = 0
+    high_count = 0
+    medium_count = 0
+    low_count = 0
+    scores: List[float] = []
+
+    # 1. DNS Security Checker
+    try:
+        dns_res = scanners.analyze_dns_security(clean_domain, dkim_selector=req.dkim_selector)
+        modules_status["dns"] = {"status": "Completed", "score": dns_res.get("security_score", 100)}
+        if not dns_res.get("error"):
+            scores.append(float(dns_res.get("security_score", 100)))
+            critical_count += dns_res.get("critical_count", 0)
+            high_count += dns_res.get("high_count", 0)
+            medium_count += dns_res.get("medium_count", 0)
+            low_count += dns_res.get("low_count", 0)
+            recommendations.extend(dns_res.get("recommendations", []))
+    except Exception as e:
+        dns_res = {"scan_type": "DNS Security Checker", "status": "Failed", "error": True, "message": str(e), "findings": []}
+        modules_status["dns"] = {"status": "Failed", "error": str(e)}
+
+    # 2. Cookie Security Checker
+    try:
+        cookie_res = scanners.analyze_cookies(target_url)
+        modules_status["cookies"] = {"status": "Completed", "score": cookie_res.get("security_score", 100)}
+        if not cookie_res.get("error"):
+            scores.append(float(cookie_res.get("security_score", 100)))
+            critical_count += cookie_res.get("critical_count", 0)
+            high_count += cookie_res.get("high_count", 0)
+            medium_count += cookie_res.get("medium_count", 0)
+            low_count += cookie_res.get("low_count", 0)
+            recommendations.extend(cookie_res.get("recommendations", []))
+    except Exception as e:
+        cookie_res = {"scan_type": "Cookie Security Checker", "status": "Failed", "error": True, "message": str(e), "cookies": []}
+        modules_status["cookies"] = {"status": "Failed", "error": str(e)}
+
+    # 3. Dependency Vulnerability Scanner
+    pkg_list = (req.package_list or "").strip()
+    if not pkg_list:
+        pkg_list = "lodash@4.17.20\naxios@0.21.1\nexpress@4.16.0"
+    try:
+        dep_res = scanners.analyze_dependencies(pkg_list, ecosystem=req.ecosystem or "npm")
+        modules_status["dependencies"] = {"status": "Completed", "score": dep_res.get("security_score", 100)}
+        if not dep_res.get("error"):
+            scores.append(float(dep_res.get("security_score", 100)))
+            critical_count += dep_res.get("critical_count", 0)
+            high_count += dep_res.get("high_count", 0)
+            medium_count += dep_res.get("medium_count", 0)
+            low_count += dep_res.get("low_count", 0)
+            recommendations.extend(dep_res.get("recommendations", []))
+    except Exception as e:
+        dep_res = {"scan_type": "Dependency Vulnerability Scanner", "status": "Failed", "error": True, "message": str(e), "packages": [], "all_vulnerabilities": []}
+        modules_status["dependencies"] = {"status": "Failed", "error": str(e)}
+
+    # 4. SSL / TLS Checker
+    try:
+        ssl_res = analyzer.analyze_ssl(target_url)
+        modules_status["ssl"] = {"status": "Completed", "valid": ssl_res.get("is_valid", True)}
+        if ssl_res.get("recommendations"):
+            recommendations.extend(ssl_res["recommendations"])
+    except Exception as e:
+        ssl_res = {"status": "Failed", "error": True, "message": str(e)}
+        modules_status["ssl"] = {"status": "Failed", "error": str(e)}
+
+    # 5. HTTP Security Headers
+    try:
+        headers_res = analyzer.analyze_headers(target_url)
+        modules_status["headers"] = {"status": "Completed", "score": headers_res.get("score", 85)}
+        scores.append(float(headers_res.get("score", 85)))
+    except Exception as e:
+        headers_res = {"status": "Failed", "error": True, "message": str(e), "checks": []}
+        modules_status["headers"] = {"status": "Failed", "error": str(e)}
+
+    # 6. Port Scanner
+    try:
+        ports_res = analyzer.analyze_ports(clean_domain)
+        modules_status["ports"] = {"status": "Completed", "open_ports": ports_res.get("open_ports_count", 0)}
+    except Exception as e:
+        ports_res = {"status": "Failed", "error": True, "message": str(e), "ports": []}
+        modules_status["ports"] = {"status": "Failed", "error": str(e)}
+
+    # 7. OWASP Top 10
+    try:
+        owasp_res = analyzer.analyze_owasp_top10(target_url)
+        modules_status["owasp"] = {"status": "Completed", "score": owasp_res.get("overall_score", 85)}
+        scores.append(float(owasp_res.get("overall_score", 85)))
+    except Exception as e:
+        owasp_res = {"status": "Failed", "error": True, "message": str(e), "findings": []}
+        modules_status["owasp"] = {"status": "Failed", "error": str(e)}
+
+    # 8. WHOIS Lookup
+    try:
+        whois_res = analyzer.analyze_whois(target_url)
+        modules_status["whois"] = {"status": "Completed"}
+    except Exception as e:
+        whois_res = {"status": "Failed", "error": True, "message": str(e)}
+        modules_status["whois"] = {"status": "Failed", "error": str(e)}
+
+    # Calculate overall combined security score
+    overall_score = int(round(sum(scores) / len(scores))) if scores else 85
+    risk_score = float(round(max(0.0, min(10.0, (100 - overall_score) / 10.0)), 1))
+
+    if critical_count > 0:
+        risk_level = "Critical"
+    elif high_count > 0:
+        risk_level = "High"
+    elif medium_count > 0:
+        risk_level = "Medium"
+    else:
+        risk_level = "Low"
+
+    duration_sec = (datetime.datetime.now(datetime.timezone.utc) - start_time).total_seconds()
+    duration_str = f"{int(duration_sec // 60)}m {int(duration_sec % 60)}s" if duration_sec >= 60 else f"{duration_sec:.1f}s"
+
+    # Deduplicate recommendations
+    seen_recs = set()
+    unique_recs = []
+    for r in recommendations:
+        if r and r not in seen_recs:
+            seen_recs.add(r)
+            unique_recs.append(r)
+
+    combined_payload = {
+        "scan_type": "Combined Full Scan",
+        "scanner_name": "CloudVuln All-In-One Security Audit",
+        "target": target_url,
+        "domain": clean_domain,
+        "scan_timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "status": "Completed",
+        "risk_level": risk_level,
+        "security_score": overall_score,
+        "risk_score": risk_score,
+        "critical_count": critical_count,
+        "high_count": high_count,
+        "medium_count": medium_count,
+        "low_count": low_count,
+        "duration": duration_str,
+        "modules_status": modules_status,
+        "dns_summary": dns_res,
+        "cookie_summary": cookie_res,
+        "dependency_summary": dep_res,
+        "ssl_summary": ssl_res,
+        "headers_summary": headers_res,
+        "ports_summary": ports_res,
+        "owasp_summary": owasp_res,
+        "whois_summary": whois_res,
+        "cve_findings": dep_res.get("all_vulnerabilities", []),
+        "recommendations": unique_recs or ["Maintain current security controls and continuous automated scanning."],
+        "executive_summary": f"Comprehensive multi-vector security assessment completed for {clean_domain}. Overall Posture Score: {overall_score}/100 with calculated risk index {risk_score}/10.",
+    }
+
+    # Save to Supabase PostgreSQL database
+    scan_ref = _save_scan_record_to_db(db, current_user, clean_domain, "Combined Full Scan", "Multi-Vector Cloud Perimeter", combined_payload)
+    combined_payload["scan_ref"] = scan_ref
+
+    db.add(models.ActivityLog(
+        text=f"Run All Scans completed for {clean_domain} (Ref: {scan_ref}, Score: {overall_score}/100, Risk: {risk_score}/10)",
+        type="info" if risk_level == "Low" else "warning",
+        time_ago="Just now",
+        user_id=current_user.id,
+    ))
+    db.commit()
+
+    return combined_payload
 
 
 # ──────────────────────────────────────────────

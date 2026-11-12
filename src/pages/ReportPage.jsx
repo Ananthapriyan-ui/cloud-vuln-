@@ -15,7 +15,13 @@ import {
   Lock,
   Globe,
   Eye,
-  AlertCircle
+  AlertCircle,
+  Network,
+  Package,
+  Cookie,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -78,6 +84,9 @@ export const ReportPage = () => {
   const portsSummary = reportData?.scan_data?.ports_summary || null;
   const headersSummary = reportData?.scan_data?.headers_summary || null;
   const whoisSummary = reportData?.scan_data?.whois_summary || null;
+  const dnsSummary = reportData?.scan_data?.dns_summary || (reportData?.scan_data?.scan_type === 'DNS Security Checker' || reportData?.scan_data?.records_summary ? reportData.scan_data : null);
+  const cookieSummary = reportData?.scan_data?.cookie_summary || (reportData?.scan_data?.scan_type === 'Cookie Security Checker' || reportData?.scan_data?.cookies ? reportData.scan_data : null);
+  const dependencySummary = reportData?.scan_data?.dependency_summary || (reportData?.scan_data?.scan_type === 'Dependency Vulnerability Scanner' || reportData?.scan_data?.packages ? reportData.scan_data : null);
   const owaspFindings = Array.isArray(reportData?.scan_data?.owasp_summary?.findings)
     ? reportData.scan_data.owasp_summary.findings
     : [];
@@ -236,6 +245,208 @@ export const ReportPage = () => {
             </span>
             <p className="text-xs text-slate-300 leading-relaxed">{executiveSummary}</p>
           </div>
+
+          {/* DNS Security Checker Report Section */}
+          {dnsSummary && (
+            <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <span className="font-mono text-xs font-bold text-sky-400 flex items-center gap-1.5">
+                  <Network className="w-4 h-4" /> DNS Security &amp; Email Authentication (SPF / DMARC / DKIM / DNSSEC)
+                </span>
+                <Badge variant={dnsSummary.security_score >= 80 ? 'success' : dnsSummary.security_score >= 60 ? 'warning' : 'critical'} size="sm">
+                  DNS Score: {dnsSummary.security_score ?? 100}/100
+                </Badge>
+              </div>
+
+              {/* Records Breakdown Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[10px] uppercase">SPF Record</span>
+                  <p className="text-slate-200 truncate">{dnsSummary.records_summary?.SPF || 'Not Found'}</p>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[10px] uppercase">DMARC Record</span>
+                  <p className="text-slate-200 truncate">{dnsSummary.records_summary?.DMARC || 'Not Found'}</p>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[10px] uppercase">DNSSEC Status</span>
+                  <p className={dnsSummary.records_summary?.DNSSEC === 'Enabled' ? 'text-emerald-400' : 'text-amber-400'}>
+                    {dnsSummary.records_summary?.DNSSEC || 'Disabled'}
+                  </p>
+                </div>
+                <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 space-y-1">
+                  <span className="text-slate-400 text-[10px] uppercase">DKIM Status</span>
+                  <p className="text-slate-200 truncate">{dnsSummary.records_summary?.DKIM?.record ? 'Configured' : 'Auto-check completed'}</p>
+                </div>
+              </div>
+
+              {/* Findings Table */}
+              {Array.isArray(dnsSummary.findings) && dnsSummary.findings.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800 bg-slate-900">
+                      <tr>
+                        <th className="p-2.5">Check</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5">Severity</th>
+                        <th className="p-2.5">Observation / Evidence</th>
+                        <th className="p-2.5">Recommendation</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                      {dnsSummary.findings.map((f, idx) => (
+                        <tr key={idx} className="hover:bg-slate-900/40">
+                          <td className="p-2.5 font-bold text-sky-400">{f.check}</td>
+                          <td className="p-2.5">
+                            <Badge variant={f.status === 'Found' || f.status === 'Enabled' ? 'success' : f.status === 'Missing' || f.status === 'Error' ? 'critical' : 'warning'} size="sm">
+                              {f.status}
+                            </Badge>
+                          </td>
+                          <td className="p-2.5 text-slate-300">{f.severity}</td>
+                          <td className="p-2.5 text-slate-300 font-sans max-w-xs">{f.description}</td>
+                          <td className="p-2.5 text-slate-400 font-sans max-w-xs">{f.recommendation || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Dependency Vulnerability Scanner Report Section */}
+          {dependencySummary && (
+            <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <span className="font-mono text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                  <Package className="w-4 h-4" /> Dependency Vulnerability Audit (OSV / NIST NVD v2.0)
+                </span>
+                <Badge variant={dependencySummary.critical_count > 0 ? 'critical' : dependencySummary.high_count > 0 ? 'high' : 'success'} size="sm">
+                  {dependencySummary.total_vulnerabilities_found || dependencySummary.all_vulnerabilities?.length || 0} CVEs / Advisories Found
+                </Badge>
+              </div>
+
+              {/* Packages Table */}
+              {Array.isArray(dependencySummary.packages) && dependencySummary.packages.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800 bg-slate-900">
+                      <tr>
+                        <th className="p-2.5">Package</th>
+                        <th className="p-2.5">Version</th>
+                        <th className="p-2.5">Ecosystem</th>
+                        <th className="p-2.5">Status</th>
+                        <th className="p-2.5">Identified CVEs &amp; Advisories</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                      {dependencySummary.packages.map((pkg, idx) => {
+                        const vulns = pkg.vulnerabilities || [];
+                        return (
+                          <tr key={idx} className="hover:bg-slate-900/40">
+                            <td className="p-2.5 font-bold text-cyan-400">{pkg.package || pkg.name}</td>
+                            <td className="p-2.5 text-slate-200">{pkg.version || 'unspecified'}</td>
+                            <td className="p-2.5 text-slate-400 uppercase">{pkg.ecosystem}</td>
+                            <td className="p-2.5">
+                              <Badge variant={vulns.length > 0 ? 'critical' : 'success'} size="sm">
+                                {vulns.length > 0 ? `${vulns.length} VULN` : 'CLEAN'}
+                              </Badge>
+                            </td>
+                            <td className="p-2.5 text-slate-300 font-sans">
+                              {vulns.length > 0 ? (
+                                <div className="space-y-1">
+                                  {vulns.map((v, vIdx) => (
+                                    <div key={vIdx} className="text-xs">
+                                      <span className="font-mono font-bold text-rose-400">{v.cve_id}</span>{' '}
+                                      <span className="text-slate-400">({v.severity || 'Medium'}, CVSS {v.cvss_score || 'N/A'}):</span>{' '}
+                                      <span className="text-slate-300">{v.description?.slice(0, 100)}...</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <span className="text-emerald-400 font-mono text-xs">No Known Vulnerabilities</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cookie Security Checker Report Section */}
+          {cookieSummary && (
+            <div className="p-5 rounded-xl bg-slate-950/80 border border-slate-800 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <span className="font-mono text-xs font-bold text-amber-400 flex items-center gap-1.5">
+                  <Cookie className="w-4 h-4" /> HTTP Set-Cookie Security Directives Audit
+                </span>
+                <Badge variant={cookieSummary.security_score >= 80 ? 'success' : cookieSummary.security_score >= 60 ? 'warning' : 'critical'} size="sm">
+                  Cookie Score: {cookieSummary.security_score ?? 100}/100
+                </Badge>
+              </div>
+
+              {Array.isArray(cookieSummary.cookies) && cookieSummary.cookies.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="text-slate-400 font-mono uppercase text-[10px] border-b border-slate-800 bg-slate-900">
+                      <tr>
+                        <th className="p-2.5">Cookie Name</th>
+                        <th className="p-2.5">Secure</th>
+                        <th className="p-2.5">HttpOnly</th>
+                        <th className="p-2.5">SameSite</th>
+                        <th className="p-2.5">Scope</th>
+                        <th className="p-2.5">Severity</th>
+                        <th className="p-2.5">Observed Issues</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+                      {cookieSummary.cookies.map((c, idx) => (
+                        <tr key={idx} className="hover:bg-slate-900/40">
+                          <td className="p-2.5 font-bold text-amber-400">{c.name}</td>
+                          <td className="p-2.5">
+                            <Badge variant={c.secure ? 'success' : 'critical'} size="sm">
+                              {c.secure ? 'SECURE' : 'MISSING'}
+                            </Badge>
+                          </td>
+                          <td className="p-2.5">
+                            <Badge variant={c.httponly ? 'success' : 'critical'} size="sm">
+                              {c.httponly ? 'HTTPONLY' : 'MISSING'}
+                            </Badge>
+                          </td>
+                          <td className="p-2.5 text-slate-300">{c.samesite}</td>
+                          <td className="p-2.5 text-slate-400">{c.domain} ({c.path})</td>
+                          <td className="p-2.5">
+                            <Badge variant={(c.severity || 'low').toLowerCase()} size="sm">
+                              {c.severity || 'LOW'}
+                            </Badge>
+                          </td>
+                          <td className="p-2.5 text-slate-300 font-sans max-w-xs">
+                            {c.issues?.length > 0 ? (
+                              <ul className="space-y-0.5 text-rose-300">
+                                {c.issues.map((iss, iIdx) => (
+                                  <li key={iIdx}>• {typeof iss === 'object' ? (iss.description || iss.attribute) : iss}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <span className="text-emerald-400 font-mono">Properly Protected</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-4 text-xs font-mono text-slate-400 bg-slate-900/50 rounded-lg">
+                  No cookies were set by the target server. No cookie-related vulnerabilities detected.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* OWASP Top 10 Assessment Findings Card */}
           {owaspFindings.length > 0 && (
