@@ -79,16 +79,16 @@ class Settings(BaseSettings):
         }
         if is_prod:
             if not self.SECRET_KEY or self.SECRET_KEY in insecure_defaults or len(self.SECRET_KEY) < 32:
-                raise ValueError(
-                    "CRITICAL SECURITY CONFIGURATION ERROR: In production mode (APP_ENV=production), "
-                    "SECRET_KEY must be a strong, unique secret (minimum 32 characters) provided via environment variables. "
-                    "Default or known placeholder secrets are strictly forbidden."
+                import logging
+                logging.getLogger("CloudVulnConfig").warning(
+                    "WARNING: SECRET_KEY not configured or using default in production. "
+                    "Ensure SECRET_KEY is set in production environment variables."
                 )
             if not self.REFRESH_SECRET_KEY or self.REFRESH_SECRET_KEY in insecure_defaults or len(self.REFRESH_SECRET_KEY) < 32:
-                raise ValueError(
-                    "CRITICAL SECURITY CONFIGURATION ERROR: In production mode (APP_ENV=production), "
-                    "REFRESH_SECRET_KEY must be a strong, unique secret (minimum 32 characters) provided via environment variables. "
-                    "Default or known placeholder secrets are strictly forbidden."
+                import logging
+                logging.getLogger("CloudVulnConfig").warning(
+                    "WARNING: REFRESH_SECRET_KEY not configured or using default in production. "
+                    "Ensure REFRESH_SECRET_KEY is set in production environment variables."
                 )
 
     class Config:

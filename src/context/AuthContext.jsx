@@ -84,6 +84,15 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     let mounted = true;
 
+    // Safety net: never leave the app stuck on the loading screen.
+    // If restoreSession() hangs (e.g. Supabase timeout), unblock after 4 s.
+    const loadingTimeout = setTimeout(() => {
+      if (mounted) {
+        console.warn('AuthContext: session restore timed out — unblocking UI.');
+        setLoading(false);
+      }
+    }, 4000);
+
     // Clean up empty trailing hash from OAuth redirect
     if (window.location.hash === '#' || window.location.hash.startsWith('#access_token') || window.location.hash.startsWith('#error')) {
       try {
@@ -94,55 +103,58 @@ export const AuthProvider = ({ children }) => {
     }
 
     async function restoreSession() {
-      // 1. Check Flask JWT local token first
-      const token = getStoredToken();
-      if (token) {
-        try {
-          const userData = await authGetMe(token);
-          if (mounted && userData) {
-            setUser(buildUser(userData));
-            setLoading(false);
-            return;
-          }
-        } catch (err) {
-          console.error('Session restore error:', err);
-        }
-      }
-
-      // 2. Check Supabase session (e.g. after Google OAuth redirect)
-      const client = getSupabase() || supabase;
-      if (client) {
-        try {
-          const { data: { session } } = await client.auth.getSession();
-          if (mounted && session?.user && session?.access_token) {
-            try {
-              const { ok, data } = await authFetch('/auth/oauth-sync', {
-                provider_token: session.access_token,
-              });
-              if (mounted && ok && data?.access_token) {
-                storeTokens(data.access_token, data.refresh_token);
-                setUser(buildUser(data.user || session.user));
-                setLoading(false);
-                return;
-              }
-            } catch (syncErr) {
-              console.error('OAuth backend sync failed:', syncErr);
-            }
-
-            // Fallback: If backend sync is offline or unreachable, retain Supabase user session
-            if (mounted) {
-              storeTokens(session.access_token, session.refresh_token);
-              setUser(buildUser(session.user));
-              setLoading(false);
+      try {
+        // 1. Check Flask JWT local token first
+        const token = getStoredToken();
+        if (token) {
+          try {
+            const userData = await authGetMe(token);
+            if (mounted && userData) {
+              setUser(buildUser(userData));
               return;
             }
+          } catch (err) {
+            console.error('Session restore error:', err);
           }
-        } catch (err) {
-          console.error('Supabase session check error:', err);
+          // Token was invalid/expired — clear it so we don't retry on every load
+          clearTokens();
         }
-      }
 
-      if (mounted) setLoading(false);
+        // 2. Check Supabase session (e.g. after Google OAuth redirect)
+        const client = getSupabase() || supabase;
+        if (client) {
+          try {
+            const { data: { session } } = await client.auth.getSession();
+            if (mounted && session?.user && session?.access_token) {
+              try {
+                const { ok, data } = await authFetch('/auth/oauth-sync', {
+                  provider_token: session.access_token,
+                });
+                if (mounted && ok && data?.access_token) {
+                  storeTokens(data.access_token, data.refresh_token);
+                  setUser(buildUser(data.user || session.user));
+                  return;
+                }
+              } catch (syncErr) {
+                console.error('OAuth backend sync failed:', syncErr);
+              }
+
+              // Fallback: backend sync offline — retain Supabase user session
+              if (mounted) {
+                storeTokens(session.access_token, session.refresh_token);
+                setUser(buildUser(session.user));
+                return;
+              }
+            }
+          } catch (err) {
+            console.error('Supabase session check error:', err);
+          }
+        }
+      } finally {
+        // Always unblock the loading state, regardless of what happened above
+        if (mounted) setLoading(false);
+        clearTimeout(loadingTimeout);
+      }
     }
 
     restoreSession();
@@ -160,6 +172,7 @@ export const AuthProvider = ({ children }) => {
             if (ok && syncData?.access_token) {
               storeTokens(syncData.access_token, syncData.refresh_token);
               setUser(buildUser(syncData.user || session.user));
+              setLoading(false);
               return;
             }
           } catch (syncErr) {
@@ -168,9 +181,11 @@ export const AuthProvider = ({ children }) => {
           // Fallback to Supabase user session directly
           storeTokens(session.access_token, session.refresh_token);
           setUser(buildUser(session.user));
+          setLoading(false);
         } else if (event === 'SIGNED_OUT') {
           clearTokens();
           setUser(null);
+          setLoading(false);
         }
       });
       authListener = data?.subscription;
@@ -178,6 +193,7 @@ export const AuthProvider = ({ children }) => {
 
     return () => {
       mounted = false;
+      clearTimeout(loadingTimeout);
       if (authListener) authListener.unsubscribe();
     };
   }, []);

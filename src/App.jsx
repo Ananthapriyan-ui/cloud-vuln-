@@ -6,9 +6,11 @@ import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { AppLayout } from './components/layout/AppLayout';
 import { PageSkeleton } from './components/ui/Loader';
 
+// Direct imports for entry point authentication pages to eliminate blank loading states
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
+
 // Lazy-loaded route components for performance optimization & code splitting
-const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })));
-const RegisterPage = lazy(() => import('./pages/RegisterPage').then(m => ({ default: m.RegisterPage })));
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const ScannerPage = lazy(() => import('./pages/ScannerPage').then(m => ({ default: m.ScannerPage })));
 const ReportPage = lazy(() => import('./pages/ReportPage').then(m => ({ default: m.ReportPage })));
